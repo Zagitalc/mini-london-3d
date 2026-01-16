@@ -1,20 +1,20 @@
-import {featureEach} from '@turf/meta';
-import {Evented, FullscreenControl, LngLat, Map as Mapbox, MercatorCoordinate, NavigationControl} from 'mapbox-gl';
+import { featureEach } from '@turf/meta';
+import { Evented, FullscreenControl, LngLat, LngLatBounds, Map as Mapbox, MercatorCoordinate, NavigationControl } from 'mapbox-gl';
 import AnimatedPopup from 'mapbox-gl-animated-popup';
 import animation from './animation';
 import Clock from './clock';
 import configs from './configs';
-import {ClockControl, MapboxGLButtonControl, SearchControl} from './controls';
+import { ClockControl, MapboxGLButtonControl, SearchControl } from './controls';
 import Dataset from './dataset';
-import {Airport, Flight, FlightStatus, Operator, POI, RailDirection, Railway, Station, Train, TrainTimetables, TrainType, TrainVehicleType} from './data-classes';
+import { Airport, Flight, FlightStatus, Operator, POI, RailDirection, Railway, Station, Train, TrainTimetables, TrainType, TrainVehicleType } from './data-classes';
 import extend from './extend';
 import * as helpers from './helpers/helpers';
-import {pickObject} from './helpers/helpers-deck';
+import { pickObject } from './helpers/helpers-deck';
 import * as helpersGeojson from './helpers/helpers-geojson';
 import * as helpersMapbox from './helpers/helpers-mapbox';
-import {GeoJsonLayer, ThreeLayer, Tile3DLayer, TrafficLayer} from './layers';
-import {loadBusData, loadDynamicBusData, loadDynamicFlightData, loadDynamicTrainData, loadStaticData, loadTimetableData, updateOdptUrl} from './loader';
-import {AboutPanel, BusPanel, LayerPanel, SharePanel, StationPanel, TrackingModePanel, TrainPanel} from './panels';
+import { GeoJsonLayer, ThreeLayer, Tile3DLayer, TrafficLayer } from './layers';
+import { loadBusData, loadDynamicBusData, loadDynamicFlightData, loadDynamicTrainData, loadStaticData, loadTimetableData, updateOdptUrl } from './loader';
+import { AboutPanel, BusPanel, LayerPanel, SharePanel, StationPanel, TrackingModePanel, TrainPanel } from './panels';
 import Plugin from './plugin';
 import nearestCloserPointOnLine from './turf/nearest-closer-point-on-line';
 
@@ -28,10 +28,9 @@ const DEGREE_TO_RADIAN = Math.PI / 180;
 
 // Replace NavigationControl._updateZoomButtons to support disabling the control
 const _updateZoomButtons = NavigationControl.prototype._updateZoomButtons;
-NavigationControl.prototype._updateZoomButtons = function() {
+NavigationControl.prototype._updateZoomButtons = function () {
     const me = this,
-        {_disabled, _zoomInButton, _zoomOutButton, _compass} = me;
-
+        { _disabled, _zoomInButton, _zoomOutButton, _compass } = me;
     _updateZoomButtons.apply(me);
 
     if (_disabled) {
@@ -43,14 +42,14 @@ NavigationControl.prototype._updateZoomButtons = function() {
     _compass.setAttribute('aria-disabled', (!!_disabled).toString());
 };
 
-NavigationControl.prototype.enable = function() {
+NavigationControl.prototype.enable = function () {
     const me = this;
 
     delete me._disabled;
     me._updateZoomButtons();
 };
 
-NavigationControl.prototype.disable = function() {
+NavigationControl.prototype.disable = function () {
     const me = this;
 
     me._disabled = true;
@@ -85,15 +84,28 @@ export default class extends Evented {
         }, options);
 
         me.lang = helpers.getLang(options.lang);
-        me.dataUrl = options.dataUrl;
-        me.dataSources = options.dataSources.map(({gtfsUrl, vehiclePositionUrl, color}) => ({
-            gtfsUrl: updateOdptUrl(gtfsUrl, options.secrets),
-            vehiclePositionUrl: updateOdptUrl(vehiclePositionUrl, options.secrets),
+
+        // Determine city from URL (e.g. ?city=london). Fall back to configs.city.
+        const qs = typeof location !== 'undefined' ? new URLSearchParams(location.search) : null;
+        const city = (qs && qs.get('city')) || configs.city;
+        me.city = city;
+
+        // Use local build data when running London (or localhost), otherwise use default dataUrl.
+        me.dataUrl = (city === 'london' || (typeof location !== 'undefined' && location.hostname === 'localhost'))
+            ? 'data'
+            : options.dataUrl;
+
+        const secrets = options.secrets || {};
+        const dataSources = Array.isArray(options.dataSources) ? options.dataSources : [];
+
+        me.dataSources = dataSources.map(({ gtfsUrl, vehiclePositionUrl, color }) => ({
+            gtfsUrl: updateOdptUrl(gtfsUrl, secrets),
+            vehiclePositionUrl: updateOdptUrl(vehiclePositionUrl, secrets),
             color
         }));
         me.container = typeof options.container === 'string' ?
             document.getElementById(options.container) : options.container;
-        me.secrets = options.secrets;
+        me.secrets = secrets;
         me.modelOrigin = MercatorCoordinate.fromLngLat(options.center);
         me.exitPopups = [];
 
@@ -129,7 +141,11 @@ export default class extends Evented {
         options.container = initContainer(me.container);
 
         // This style overrides the option
-        options.style = 'assets/style.json';
+        // Use Tokyo style by default, but allow a cleaner base style for London.
+        // (London currently renders its own fallback layers on top.)
+        options.style = (me.city === 'london')
+            ? 'mapbox://styles/mapbox/light-v11'
+            : 'assets/style.json';
 
         // The custom attribution will be appended only if ConfigControl is visible
         if (!options.configControl) {
@@ -138,7 +154,7 @@ export default class extends Evented {
 
         me.map = new Mapbox(options);
 
-        for (const event of configs.events) {
+        for (const event of (configs.events || [])) {
             me.map.on(event, me.fire.bind(me));
         }
 
@@ -154,7 +170,7 @@ export default class extends Evented {
                 .then(offset => me.clock.setTimezoneOffset(offset));
 
         Promise.all([
-            loadStaticData(me.dataUrl, me.lang, clockPromise)
+            loadStaticData(me.dataUrl, me.lang, clockPromise, me.city)
                 .then(me.initData.bind(me))
                 .catch(error => {
                     showErrorMessage(me.container);
@@ -177,6 +193,14 @@ export default class extends Evented {
      */
     getMapboxMap() {
         return this.map;
+    }
+
+    /**
+     * Returns the current city (from URL querystring if present).
+     * @returns {string}
+     */
+    getCityFromLocation() {
+        return this.city || configs.city;
     }
 
     /**
@@ -575,7 +599,7 @@ export default class extends Evented {
     setDataSources(dataSources) {
         const me = this;
 
-        me.dataSources = dataSources.map(({gtfsUrl, vehiclePositionUrl, color}) => ({
+        me.dataSources = dataSources.map(({ gtfsUrl, vehiclePositionUrl, color }) => ({
             gtfsUrl: updateOdptUrl(gtfsUrl, me.secrets),
             vehiclePositionUrl: updateOdptUrl(vehiclePositionUrl, me.secrets),
             color
@@ -608,7 +632,7 @@ export default class extends Evented {
         // Build feature lookup dictionary and update feature properties
         featureEach(me.featureCollection, feature => {
             const properties = feature.properties,
-                {group, altitude} = properties;
+                { group, altitude } = properties;
 
             if (properties.type === 1) {
                 // stations
@@ -671,9 +695,14 @@ export default class extends Evented {
 
     initialize() {
         const me = this,
-            {lang, dict, clock, map, container, featureCollection} = me,
+            { lang, dict, clock, map, container, featureCollection } = me,
             initialZoom = map.getZoom(),
             layerZoom = me.layerZoom = getLayerZoom(initialZoom);
+
+        // Expose the Map instance for DevTools debugging
+        if (typeof window !== 'undefined') {
+            window.__mt3d = me;
+        }
 
         if (map.loaded()) {
             hideLoader(container);
@@ -686,7 +715,32 @@ export default class extends Evented {
         // Deprecated
         // me.objectUnit = Math.max(getObjectScale(initialZoom) * .19, .02);
 
-        me.trafficLayer = new TrafficLayer({id: 'traffic'});
+        const isLondon = me.getCityFromLocation() === 'london';
+
+        // TrafficLayer (deck.gl compute/WebGL) requires full route/features datasets.
+        // London mode currently doesn't have those yet, so we use a safe no-op stub.
+        if (!isLondon) {
+            me.trafficLayer = new TrafficLayer({ id: 'traffic' });
+        } else {
+            me.trafficLayer = {
+                // Methods used throughout the codebase
+                setTimeOffset() { },
+                refreshDelayMarkers() { },
+                addRouteGroup() { },
+                addColorGroup() { },
+                addObject() { },
+                updateObject() { },
+                removeObject() { },
+
+                // Used by Map.pickObject() (deck.gl picking). London mode disables TrafficLayer,
+                // so just return null to indicate "nothing picked".
+                pickObject() { return null; },
+
+                // Used by adjustCoord() fallback path
+                project: (lnglat /*, altitude */) => map.project(lnglat)
+            };
+            console.log('[London] TrafficLayer disabled (missing features/route datasets)');
+        }
 
         // To move to the style file in v4.0
         map.addLayer({
@@ -724,8 +778,8 @@ export default class extends Evented {
                 lineWidthUnits: 'pixels',
                 lineWidthScale:
                     zoom === 13 ? helpers.clamp(Math.pow(2, initialZoom - 12), .125, 1) :
-                    zoom === 18 ? helpers.clamp(Math.pow(2, initialZoom - 19), 1, 8) : 1,
-                parameters: {depthTest: false},
+                        zoom === 18 ? helpers.clamp(Math.pow(2, initialZoom - 19), 1, 8) : 1,
+                parameters: { depthTest: false },
                 minzoom: zoom <= 13 ? 0 : zoom,
                 maxzoom: zoom >= 18 ? 24 : zoom + 1
             };
@@ -750,7 +804,7 @@ export default class extends Evented {
                         data: key2 === 'ug' ?
                             helpersGeojson.featureFilter(featureCollection, filter) :
                             helpersGeojson.emptyFeatureCollection(),
-                        transitions: {opacity: configs.transitionDuration}
+                        transitions: { opacity: configs.transitionDuration }
                     }, {
                         'railways': {
                             filled: false,
@@ -801,14 +855,119 @@ export default class extends Evented {
             data: helpersGeojson.featureFilter(featureCollection, p => p.altitude === 0)
         });
 
+
+
+        // London fallback rendering (when features.json etc. are not generated)
+        if (me.getCityFromLocation() === 'london') {
+            const londonGeo = me.buildLondonRailGeoJSON();
+
+            try {
+                // Add/replace a simple GeoJSON source containing railways + stations
+                if (map.getSource('london-rail')) {
+                    map.getSource('london-rail').setData(londonGeo);
+                    if (map.getLayer('london-railways')) map.moveLayer('london-railways');
+                    if (map.getLayer('london-stations')) map.moveLayer('london-stations');
+                } else {
+                    map.addSource('london-rail', {
+                        type: 'geojson',
+                        data: londonGeo
+                    });
+
+                    map.addLayer({
+                        id: 'london-railways',
+                        type: 'line',
+                        source: 'london-rail',
+                        filter: ['==', ['get', 'type'], 'railway'],
+                        layout: {
+                            'line-join': 'round',
+                            'line-cap': 'round'
+                        },
+                        paint: {
+                            'line-color': ['get', 'color'],
+                            'line-width': 6,
+                            'line-opacity': 0.95
+                        }
+                    });
+
+                    map.addLayer({
+                        id: 'london-stations',
+                        type: 'circle',
+                        source: 'london-rail',
+                        filter: ['==', ['get', 'type'], 'station'],
+                        paint: {
+                            'circle-radius': 6,
+                            'circle-color': '#ffffff',
+                            'circle-stroke-width': 2,
+                            'circle-stroke-color': '#000000',
+                            'circle-opacity': 0.98
+                        }
+                    });
+
+                    // Auto-zoom to the fallback data so it's obvious when it works
+                    const bounds = new LngLatBounds();
+                    for (const f of londonGeo.features || []) {
+                        const g = f.geometry;
+                        if (!g) continue;
+                        if (g.type === 'Point' && Array.isArray(g.coordinates)) {
+                            bounds.extend(g.coordinates);
+                        } else if (g.type === 'LineString' && Array.isArray(g.coordinates)) {
+                            for (const c of g.coordinates) bounds.extend(c);
+                        }
+                    }
+                    if (!bounds.isEmpty()) {
+                        map.fitBounds(bounds, { padding: 60, duration: 0 });
+                    }
+                    // Quick sanity logs (open DevTools console)
+                    console.log('[London fallback] features:', (londonGeo.features || []).length);
+                    console.log('[London fallback] layers added:', !!map.getLayer('london-railways'), ' / ', !!map.getLayer('london-stations'));
+                    map.moveLayer('london-railways');
+                    map.moveLayer('london-stations');
+                }
+            } catch (err) {
+                console.error('[London fallback] failed to add layers/source', err);
+            }
+
+            // London live trains (Path B MVP): Victoria line only using TfL arrivals predictions.
+            // This does NOT require the full MT3D features/timetable datasets.
+            try {
+                if (!map.getSource('london-trains')) {
+                    map.addSource('london-trains', {
+                        type: 'geojson',
+                        data: helpersGeojson.emptyFeatureCollection()
+                    });
+
+                    map.addLayer({
+                        id: 'london-trains',
+                        type: 'circle',
+                        source: 'london-trains',
+                        paint: {
+                            'circle-radius': 4,
+                            'circle-color': ['coalesce', ['get', 'color'], '#0066ff'],
+                            'circle-stroke-width': 1,
+                            'circle-stroke-color': '#ffffff',
+                            'circle-opacity': 0.95
+                        }
+                    });
+
+                    // Keep it on top of the fallback layers
+                    map.moveLayer('london-trains');
+                }
+
+                // Start polling TfL if we have station data.
+                me.startLondonLiveTrains({ lineId: 'victoria', pollMs: 10000 });
+            } catch (err) {
+                console.error('[London live trains] init failed', err);
+            }
+        }
+
         for (const zoom of [13, 14, 15, 16, 17, 18]) {
             const interpolate = ['interpolate', ['exponential', 2], ['zoom']],
                 width = ['get', 'width'],
                 color = ['get', 'color'],
                 lineWidth =
                     zoom === 13 ? [...interpolate, 9, ['/', width, 8], 12, width] :
-                    zoom === 18 ? [...interpolate, 19, width, 22, ['*', width, 8]] :
-                    width;
+                        zoom === 18 ? [...interpolate, 19, width, 22, ['*', width, 8]] :
+                            width;
 
             for (const key of ['railways', 'stations', 'stations-outline']) {
                 map.addLayer({
@@ -849,34 +1008,46 @@ export default class extends Evented {
                     }
                 }, 'trees');
             }
+
         }
 
-        me.addLayer(me.trafficLayer, 'trees');
-
-        const routeData = [],
-            colorData = [];
-
-        for (const {id, color} of me.railways.getAll()) {
-            routeData.push({
-                id,
-                feature: [13, 14, 15, 16, 17, 18].map(zoom => me.featureLookup.get(`${id}.${zoom}`))
-            });
-            colorData.push({id, color});
+        if (!isLondon) {
+            me.addLayer(me.trafficLayer, 'trees');
         }
-        for (const [id, feature] of me.featureLookup) {
-            if (feature.properties.altitude > 0) {
-                routeData.push({id, feature});
+
+        // London currently does not generate the full MT3D route/features datasets.
+        // Avoid initializing the TrafficLayer route pipeline with undefined features,
+        // which causes RouteData.addGroup() to crash and triggers WebGL zero-size texture errors.
+        if (me.getCityFromLocation() !== 'london') {
+            const routeData = [],
+                colorData = [];
+
+            for (const { id, color } of me.railways.getAll()) {
+                routeData.push({
+                    id,
+                    feature: [13, 14, 15, 16, 17, 18].map(zoom => me.featureLookup.get(`${id}.${zoom}`))
+                });
+                colorData.push({ id, color });
             }
-        }
-        for (const {id, color} of me.trainVehicleTypes.getAll()) {
-            colorData.push({id, color});
-        }
-        for (const {id, color, tailcolor} of me.operators.getAll()) {
-            colorData.push({id, color: [color, tailcolor]});
-        }
+            for (const [id, feature] of me.featureLookup) {
+                if (feature && feature.properties && feature.properties.altitude > 0) {
+                    routeData.push({ id, feature });
+                }
+            }
+            for (const { id, color } of me.trainVehicleTypes.getAll()) {
+                colorData.push({ id, color });
+            }
+            for (const { id, color, tailcolor } of me.operators.getAll()) {
+                colorData.push({ id, color: [color, tailcolor] });
+            }
 
-        me.trafficLayer.addRouteGroup(routeData);
-        me.trafficLayer.addColorGroup(colorData);
+            me.trafficLayer.addRouteGroup(routeData);
+            me.trafficLayer.addColorGroup(colorData);
+        } else {
+            // Still add colors if needed later, but keep route groups empty.
+            // (No-op for now)
+            console.log('[London] skipping TrafficLayer route groups (missing features dataset)');
+        }
 
         /* For development
         me.addLayer({
@@ -898,18 +1069,18 @@ export default class extends Evented {
 
         me.styleOpacities = helpersMapbox.getStyleOpacities(map, 'mt3d:opacity-effect');
 
-        const datalist = helpers.createElement('datalist', {id: 'stations'}, document.body);
+        const datalist = helpers.createElement('datalist', { id: 'stations' }, document.body);
         const stationTitleLookup = me.stationTitleLookup = new Map();
 
         for (const l of [lang, 'en']) {
             for (const railway of me.railways.getAll()) {
                 for (const station of railway.stations) {
-                    const {title, utitle} = station,
+                    const { title, utitle } = station,
                         stationTitle = (utitle && utitle[l]) || helpers.normalize(title[l] || title.en),
                         key = stationTitle.toUpperCase();
 
                     if (!stationTitleLookup.has(key)) {
-                        helpers.createElement('option', {value: stationTitle}, datalist);
+                        helpers.createElement('option', { value: stationTitle }, datalist);
                         stationTitleLookup.set(key, station);
                     }
                 }
@@ -921,7 +1092,7 @@ export default class extends Evented {
                 title: me.dict['search'],
                 placeholder: me.dict['station-name'],
                 list: 'stations',
-                eventHandler: ({value}) => {
+                eventHandler: ({ value }) => {
                     const station = me.stationTitleLookup.get(value.toUpperCase());
 
                     if (station && station.coord) {
@@ -938,11 +1109,11 @@ export default class extends Evented {
         if (me.navigationControl) {
             const control = me.navControl = new NavigationControl();
 
-            control._setButtonTitle = function(button) {
-                const {_zoomInButton, _zoomOutButton, _compass} = this,
+            control._setButtonTitle = function (button) {
+                const { _zoomInButton, _zoomOutButton, _compass } = this,
                     title = button === _zoomInButton ? dict['zoom-in'] :
-                    button === _zoomOutButton ? dict['zoom-out'] :
-                    button === _compass ? dict['compass'] : '';
+                        button === _zoomOutButton ? dict['zoom-out'] :
+                            button === _compass ? dict['compass'] : '';
 
                 button.title = title;
                 button.setAttribute('aria-label', title);
@@ -951,9 +1122,9 @@ export default class extends Evented {
         }
 
         if (me.fullscreenControl) {
-            const control = new FullscreenControl({container});
+            const control = new FullscreenControl({ container });
 
-            control._updateTitle = function() {
+            control._updateTitle = function () {
                 const button = this._fullscreenButton,
                     title = dict[this._isFullscreen() ? 'exit-fullscreen' : 'enter-fullscreen'];
 
@@ -987,7 +1158,7 @@ export default class extends Evented {
             map.addControl(control);
         }
 
-        me.layerPanel = new LayerPanel({layers: me.plugins});
+        me.layerPanel = new LayerPanel({ layers: me.plugins });
         me.trackingModePanel = new TrackingModePanel();
         me.aboutPanel = new AboutPanel();
 
@@ -1014,7 +1185,7 @@ export default class extends Evented {
         }
 
         if (me.clockControl) {
-            const control = me.clockCtrl = new ClockControl({lang, dict, clock});
+            const control = me.clockCtrl = new ClockControl({ lang, dict, clock });
 
             control.on('change', me.onClockChange.bind(me));
             map.addControl(control);
@@ -1051,13 +1222,13 @@ export default class extends Evented {
                 const lineWidthScale = helpers.clamp(Math.pow(2, zoom - 12), .125, 1);
 
                 for (const id of ['stations-marked-13', 'stations-selected-13', 'railways-ug-13', 'stations-ug-13', 'railways-routeug-13', 'stations-routeug-13', 'railways-routeog-13', 'stations-routeog-13']) {
-                    helpersMapbox.setLayerProps(map, id, {lineWidthScale});
+                    helpersMapbox.setLayerProps(map, id, { lineWidthScale });
                 }
             } else if (zoom > 19) {
                 const lineWidthScale = helpers.clamp(Math.pow(2, zoom - 19), 1, 8);
 
                 for (const id of ['stations-marked-18', 'stations-selected-18', 'railways-ug-18', 'stations-ug-18', 'railways-routeug-18', 'stations-routeug-18', 'railways-routeog-18', 'stations-routeog-18']) {
-                    helpersMapbox.setLayerProps(map, id, {lineWidthScale});
+                    helpersMapbox.setLayerProps(map, id, { lineWidthScale });
                 }
             }
 
@@ -1070,7 +1241,7 @@ export default class extends Evented {
                     me.setLayerVisibility(`${key}-og-${layerZoom}`, 'visible');
                 }
 
-                for (const {id} of me.gtfs.values()) {
+                for (const { id } of me.gtfs.values()) {
                     for (const key of ['busstops', 'busstops-outline']) {
                         if (prevLayerZoom >= 14) {
                             me.setLayerVisibility(`${key}-${id}-og-${prevLayerZoom}`, 'none');
@@ -1108,7 +1279,7 @@ export default class extends Evented {
             callback: () => {
                 const clock = me.clock,
                     now = clock.getTime(),
-                    {minDelay, refreshInterval, realtimeCheckInterval} = configs;
+                    { minDelay, refreshInterval, realtimeCheckInterval } = configs;
 
                 if (now - me.lastTimetableRefresh >= 86400000) {
                     me.refreshTrainTimetableData();
@@ -1158,7 +1329,7 @@ export default class extends Evented {
                     if (me.markedObject && isVehicle(me.markedObject)) {
                         changed = me.updateObjectPosition(me.markedObject);
                         if (changed.standing !== undefined) {
-                            me.updatePopup({setHTML: true});
+                            me.updatePopup({ setHTML: true });
                         }
                     }
 
@@ -1170,9 +1341,9 @@ export default class extends Evented {
                             me._setViewMode(changed.viewMode);
                         }
                         if (!me.viewAnimationID && !map._zooming && !map._rotating && !map._pitching) {
-                            const {coord, altitude, bearing} = me.trackedObject;
+                            const { coord, altitude, bearing } = me.trackedObject;
 
-                            me._jumpTo({center: coord, altitude, bearing, bearingFactor: .02});
+                            me._jumpTo({ center: coord, altitude, bearing, bearingFactor: .02 });
                             if (me.markedObject === me.trackedObject) {
                                 // This need to be called right after jumpTo() to prevent jittering
                                 me.updatePopup();
@@ -1197,12 +1368,208 @@ export default class extends Evented {
         });
 
         me.initialized = true;
-        me.fire({type: 'initialized'});
+        me.fire({ type: 'initialized' });
+    }
+
+    /**
+     * Build a simple GeoJSON from loaded railways/stations for London fallback.
+     * This is used when features.json (deck.gl extruded geometry) is not generated.
+     */
+    buildLondonRailGeoJSON() {
+        const me = this;
+        const fc = {
+            type: 'FeatureCollection',
+            features: []
+        };
+
+        if (!me.railways || !me.stations) {
+            return fc;
+        }
+
+        // Add stations (points)
+        for (const st of me.stations.getAll()) {
+            if (!st || !Array.isArray(st.coord)) continue;
+            fc.features.push({
+                type: 'Feature',
+                geometry: {
+                    type: 'Point',
+                    coordinates: st.coord
+                },
+                properties: {
+                    type: 'station',
+                    id: st.id,
+                    title: (st.title && (st.title.en || st.title.ja)) || st.id,
+                    color: st.railway?.color || '#ffffff'
+                }
+            });
+        }
+
+        // Add each railway as ONE continuous LineString through its stations (London fallback)
+        for (const rw of me.railways.getAll()) {
+            if (!rw || !Array.isArray(rw.stations) || rw.stations.length < 2) continue;
+
+            const coords = [];
+            for (const st of rw.stations) {
+                if (st && Array.isArray(st.coord)) coords.push(st.coord);
+            }
+            if (coords.length < 2) continue;
+
+            fc.features.push({
+                type: 'Feature',
+                geometry: {
+                    type: 'LineString',
+                    coordinates: coords
+                },
+                properties: {
+                    type: 'railway',
+                    id: rw.id,
+                    color: rw.color || '#00a3e0'
+                }
+            });
+        }
+
+        return fc;
+    }
+
+    /**
+     * London live trains (Path B MVP).
+     * Uses TfL `/Line/{lineId}/Arrivals` predictions to render moving dots.
+     * Note: This is not true GPS positions; we place the dot at the next predicted station.
+     */
+    startLondonLiveTrains({ lineId = 'victoria', pollMs = 10000 } = {}) {
+        const me = this;
+
+        if (me._londonLiveTrainsTimer) {
+            clearInterval(me._londonLiveTrainsTimer);
+            me._londonLiveTrainsTimer = null;
+        }
+
+        if (!me.map || !me.map.getSource('london-trains')) {
+            console.warn('[London live trains] missing map or london-trains source');
+            return;
+        }
+
+        // Build a lookup from normalized station name -> { lng, lat, color }
+        // (TfL returns stationName + naptanId. Our London dataset may not include naptanId,
+        // so we match by station name as a pragmatic MVP.)
+        const stationLookup = new Map();
+        if (me.stations) {
+            for (const st of me.stations.getAll()) {
+                if (!st || !st.coord || !st.title) continue;
+                const name = (st.title.en || st.title.ja || '').trim();
+                if (!name) continue;
+                stationLookup.set(helpers.normalize(name).toUpperCase(), {
+                    lng: st.coord[0],
+                    lat: st.coord[1],
+                    color: st.railway?.color
+                });
+            }
+        }
+
+        const tick = async () => {
+            try {
+                const arrivals = await me.fetchTfLJson(`/Line/${encodeURIComponent(lineId)}/Arrivals`);
+                const features = me.buildLondonTrainFeaturesFromArrivals(arrivals, stationLookup, lineId);
+                const src = me.map.getSource('london-trains');
+                if (src) {
+                    src.setData({ type: 'FeatureCollection', features });
+                    if (me.map.getLayer('london-trains')) me.map.moveLayer('london-trains');
+                }
+            } catch (e) {
+                // Common causes: missing/invalid app key, network/CORS, TfL rate limit
+                console.warn('[London live trains] poll failed:', e);
+            }
+        };
+
+        // Prime immediately, then poll.
+        tick();
+        me._londonLiveTrainsTimer = setInterval(tick, pollMs);
+        console.log(`[London live trains] polling TfL line=${lineId} every ${pollMs}ms`);
+    }
+
+    fetchTfLJson(path) {
+        const me = this;
+
+        const base = 'https://api.tfl.gov.uk';
+        const url = new URL(base + path);
+
+        // Support either Vite env var or secrets injected into options
+        const envKey = (typeof import.meta !== 'undefined' && import.meta.env && (import.meta.env.VITE_TFL_APP_KEY || import.meta.env.VITE_TFL_KEY))
+            ? (import.meta.env.VITE_TFL_APP_KEY || import.meta.env.VITE_TFL_KEY)
+            : null;
+        const secretKey = me.secrets && (me.secrets.tflAppKey || me.secrets.tfl_key || me.secrets.tflKey);
+        const appKey = envKey || secretKey;
+
+        if (appKey) {
+            url.searchParams.set('app_key', appKey);
+        }
+
+        return fetch(url.toString()).then(async res => {
+            if (!res.ok) {
+                const text = await res.text().catch(() => '');
+                throw new Error(`TfL ${res.status} ${text}`);
+            }
+            return res.json();
+        });
+    }
+
+    buildLondonTrainFeaturesFromArrivals(arrivals, stationLookup, lineId) {
+        // Group by vehicleId if available; otherwise fall back to a composite key.
+        const byTrain = new Map();
+        const arr = Array.isArray(arrivals) ? arrivals : [];
+
+        for (const a of arr) {
+            if (!a) continue;
+            const vehicleId = a.vehicleId || '';
+            const direction = a.direction || '';
+            const dest = a.destinationName || '';
+            const stationName = a.stationName || a.naptanId || '';
+            const tts = typeof a.timeToStation === 'number' ? a.timeToStation : Number(a.timeToStation);
+            if (!isFinite(tts)) continue;
+
+            const key = `${vehicleId || 'no-vehicle'}|${direction}|${dest}`;
+            const prev = byTrain.get(key);
+            if (!prev || tts < prev.timeToStation) {
+                byTrain.set(key, {
+                    timeToStation: tts,
+                    stationName,
+                    vehicleId: vehicleId || null,
+                    direction,
+                    dest
+                });
+            }
+        }
+
+        const features = [];
+        for (const [key, t] of byTrain) {
+            const norm = helpers.normalize(String(t.stationName)).toUpperCase();
+            const st = stationLookup.get(norm);
+            if (!st) continue;
+
+            features.push({
+                type: 'Feature',
+                geometry: {
+                    type: 'Point',
+                    coordinates: [st.lng, st.lat]
+                },
+                properties: {
+                    type: 'train',
+                    id: t.vehicleId || key,
+                    line: lineId,
+                    direction: t.direction,
+                    destination: t.dest,
+                    timeToStation: t.timeToStation,
+                    color: st.color || '#0066ff'
+                }
+            });
+        }
+
+        return features;
     }
 
     _jumpTo(options) {
         const me = this,
-            {map, trackingMode, trackingParams} = me,
+            { map, trackingMode, trackingParams } = me,
             frameRateFactor = me.ecoMode === 'normal' || me.viewAnimationID ? me.frameRateFactor : 60 / me.ecoFrameRate,
             now = performance.now(),
             currentZoom = map.getZoom(),
@@ -1210,7 +1577,7 @@ export default class extends Evented {
             currentPitch = map.getPitch(),
             scrollZooming = map.scrollZoom._active;
         let zoom, pitch,
-            {center, altitude, bearing, easeOutFactor, easeInFactor, bearingFactor} = options;
+            { center, altitude, bearing, easeOutFactor, easeInFactor, bearingFactor } = options;
 
         if (trackingMode === 'position') {
             zoom = me.baseZoom;
@@ -1281,7 +1648,7 @@ export default class extends Evented {
             delete me.prevLayerZoom;
         }
 
-        map.jumpTo({center, zoom, bearing, pitch}, {tracking: true});
+        map.jumpTo({ center, zoom, bearing, pitch }, { tracking: true });
 
         // Workaround for the issue of the scroll zoom during tracking
         if (scrollZooming) {
@@ -1336,7 +1703,7 @@ export default class extends Evented {
 
     trainRepeat(train, index) {
         const me = this,
-            {activeTrainLookup, clock} = me,
+            { activeTrainLookup, clock } = me,
             timetable = train.timetable,
             now = clock.getTimeOffset(),
             minStandingDuration = configs.minStandingDuration;
@@ -1350,7 +1717,7 @@ export default class extends Evented {
                 if (nextTimetables) {
                     let needToStand = false;
 
-                    for (const {t: id} of nextTimetables[0].pt) {
+                    for (const { t: id } of nextTimetables[0].pt) {
                         const prevTrain = activeTrainLookup.get(id);
 
                         if (prevTrain && prevTrain.arrivalStation) {
@@ -1361,7 +1728,7 @@ export default class extends Evented {
                         let marked = false,
                             tracked = false;
 
-                        for (const {t: id} of nextTimetables[0].pt) {
+                        for (const { t: id } of nextTimetables[0].pt) {
                             const prevTrain = activeTrainLookup.get(id);
 
                             if (prevTrain) {
@@ -1377,7 +1744,7 @@ export default class extends Evented {
                         nextTimetables.forEach((nextTimetable, i) => {
                             const nextTrain = me.standbyTrainLookup.get(nextTimetable.id) || new Train(nextTimetable);
 
-                            me.trainStart(nextTrain, i === 0 ? {index: 0, marked, tracked} : {index: 0});
+                            me.trainStart(nextTrain, i === 0 ? { index: 0, marked, tracked } : { index: 0 });
                         });
                     }
                     return;
@@ -1389,7 +1756,7 @@ export default class extends Evented {
 
         if (me.markedObject === train) {
             train.standing = true;
-            me.updatePopup({setHTML: true});
+            me.updatePopup({ setHTML: true });
         }
 
         const sectionLength = train.sectionLength;
@@ -1397,12 +1764,12 @@ export default class extends Evented {
         if (!final && sectionLength !== 0) {
             const delay = train.delay || 0,
                 minDelay = configs.minDelay,
-                {departureTime, arrivalTime, nextDepartureTime, sectionIndex} = train,
+                { departureTime, arrivalTime, nextDepartureTime, sectionIndex } = train,
                 feature = me.featureLookup.get(`${train.r.id}.18`),
                 stationOffsets = feature.properties['station-offsets'],
                 distance = Math.abs(stationOffsets[sectionIndex + sectionLength] - stationOffsets[sectionIndex]),
                 actualDepartureTime = index !== undefined ? Math.max(departureTime + delay, now + (clock.speed === 1 ? minStandingDuration : 0)) : departureTime !== undefined ? departureTime + delay : now;
-            let {maxSpeed, acceleration, maxAccelerationTime, maxAccDistance} = configs,
+            let { maxSpeed, acceleration, maxAccelerationTime, maxAccDistance } = configs,
                 duration, minDuration, maxDuration, accelerationTime;
 
             if (nextDepartureTime !== undefined) {
@@ -1481,7 +1848,7 @@ export default class extends Evented {
 
     flightStart(flight) {
         const me = this,
-            {activeFlightLookup, clock} = me,
+            { activeFlightLookup, clock } = me,
             id = flight.id;
 
         if (activeFlightLookup.has(id)) {
@@ -1571,13 +1938,13 @@ export default class extends Evented {
         }
 
         if (me.markedObject === bus) {
-            me.updatePopup({setHTML: true});
+            me.updatePopup({ setHTML: true });
         }
         if (me.trackedObject === bus && me.detailPanel) {
             me.detailPanel.updateHeader();
         }
 
-        const {offsets, sectionIndex, sectionLength} = bus,
+        const { offsets, sectionIndex, sectionLength } = bus,
             distance = Math.abs(offsets[sectionIndex + sectionLength] - offsets[sectionIndex]);
 
         // Sometimes distance becomes 0 because the busroute coordinates
@@ -1588,9 +1955,9 @@ export default class extends Evented {
 
         if (!final && sectionLength > 0 && distance > 0) {
             const minDelay = configs.minDelay,
-                {departureTime, nextDepartureTime} = bus,
+                { departureTime, nextDepartureTime } = bus,
                 actualDepartureTime = index !== undefined ? Math.max(departureTime, now + (clock.speed === 1 ? minBusStandingDuration : 0)) : helpers.valueOrDefault(departureTime, now);
-            let {maxBusSpeed, busAcceleration, maxBusAccelerationTime, maxBusAccDistance} = configs,
+            let { maxBusSpeed, busAcceleration, maxBusAccelerationTime, maxBusAccDistance } = configs,
                 duration, maxDuration, accelerationTime;
 
             if (nextDepartureTime !== undefined) {
@@ -1646,11 +2013,11 @@ export default class extends Evented {
 
     updateTrackingParams(reset) {
         const me = this,
-            {map, trackingMode, trackingParams} = me,
+            { map, trackingMode, trackingParams } = me,
             now = performance.now();
 
         if (trackingMode === 'bird') {
-            const {zoom, bearing, pitch} = trackingParams;
+            const { zoom, bearing, pitch } = trackingParams;
 
             if (!zoom.time || reset) {
                 const time = zoom.time = [0, now, 0, 0],
@@ -1707,7 +2074,7 @@ export default class extends Evented {
 
     updateHandlersAndControls() {
         const me = this,
-            {map, trackedObject, trackingMode} = me,
+            { map, trackedObject, trackingMode } = me,
             handlers = ['scrollZoom', 'boxZoom', 'dragRotate', 'dragPan', 'keyboard', 'doubleClickZoom', 'touchZoomRotate', 'touchPitch'];
 
         if (isVehicle(trackedObject) && trackingMode !== 'position') {
@@ -1782,7 +2149,7 @@ export default class extends Evented {
             return LngLat.convert(coord);
         }
 
-        const {map, trafficLayer} = this;
+        const { map, trafficLayer } = this;
 
         if (!isNaN(bearing)) {
             const mCoord = MercatorCoordinate.fromLngLat(coord, altitude),
@@ -1879,8 +2246,8 @@ export default class extends Evented {
 
     getTrainDescription(train) {
         const me = this,
-            {lang, dict} = me,
-            {r: railway, ad, departureTime, arrivalStation} = train,
+            { lang, dict } = me,
+            { r: railway, ad, departureTime, arrivalStation } = train,
             color = (ad && ad.color) || (train.v || railway).color,
             delay = train.delay || 0,
             arrivalTime = helpers.valueOrDefault(train.arrivalTime, train.nextDepartureTime),
@@ -1922,7 +2289,7 @@ export default class extends Evented {
     getFlightDescription(flight) {
         const me = this,
             dict = me.dict,
-            {a: airline, n: flightNumber, ds: destination} = flight,
+            { a: airline, n: flightNumber, ds: destination } = flight,
             tailcolor = airline.tailcolor || '#FFFFFF',
             scheduledTime = helpers.valueOrDefault(flight.sdt, flight.sat),
             estimatedTime = helpers.valueOrDefault(flight.edt, flight.eat),
@@ -1960,8 +2327,8 @@ export default class extends Evented {
             dict = me.dict,
             gtfs = me.gtfs.get(bus.gtfsId),
             stopLookup = gtfs.stopLookup,
-            {route, headsigns, stops} = bus.trip,
-            {shortName, longName, color, textColor} = gtfs.routeLookup.get(route),
+            { route, headsigns, stops } = bus.trip,
+            { shortName, longName, color, textColor } = gtfs.routeLookup.get(route),
             labelStyle = [
                 textColor ? `color: ${textColor};` : '',
                 color ? `background-color: ${color};` : ''
@@ -2073,7 +2440,7 @@ export default class extends Evented {
         for (const flight of me.activeFlightLookup.values()) {
             promises.push(me.stopFlight(flight));
         }
-        for (const {activeBusLookup, realtimeBuses} of me.gtfs.values()) {
+        for (const { activeBusLookup, realtimeBuses } of me.gtfs.values()) {
             for (const bus of activeBusLookup.values()) {
                 promises.push(me.stopBus(bus));
             }
@@ -2113,8 +2480,8 @@ export default class extends Evented {
     refreshBusData(replace) {
         const me = this,
             map = me.map,
-            sourceIds = new Set(me.dataSources.map(({gtfsUrl}) => gtfsUrl)),
-            deleteGtfs = ({id, activeBusLookup, layerIds, routeGroupIndex, colorGroupIndex}) => {
+            sourceIds = new Set(me.dataSources.map(({ gtfsUrl }) => gtfsUrl)),
+            deleteGtfs = ({ id, activeBusLookup, layerIds, routeGroupIndex, colorGroupIndex }) => {
                 const styleOpacities = me.styleOpacities,
                     promises = [];
 
@@ -2156,7 +2523,7 @@ export default class extends Evented {
             ).then(data =>
                 me.gtfs.has(id) ? deleteGtfs(me.gtfs.get(id)).then(() => data) : data
             ).then(data => {
-                const {agency, featureCollection, version} = data,
+                const { agency, featureCollection, version } = data,
                     featureLookup = new Map(),
                     stopLookup = new Map(),
                     routeLookup = new Map(),
@@ -2169,7 +2536,7 @@ export default class extends Evented {
 
                     if (properties.type === 0) {
                         featureLookup.set(properties.id, feature);
-                        routeData.push({id: `${id}.${properties.id}`, feature});
+                        routeData.push({ id: `${id}.${properties.id}`, feature });
                     }
                 });
                 for (const stop of data.stops) {
@@ -2195,7 +2562,7 @@ export default class extends Evented {
                     vehiclePositionUrl: source.vehiclePositionUrl,
                     color: source.color,
                     routeGroupIndex: me.trafficLayer.addRouteGroup(routeData),
-                    colorGroupIndex: me.trafficLayer.addColorGroup([{id, color: source.color}])
+                    colorGroupIndex: me.trafficLayer.addColorGroup([{ id, color: source.color }])
                 });
 
                 map.addSource(id, {
@@ -2203,6 +2570,39 @@ export default class extends Evented {
                     data: featureCollection,
                     promoteId: 'id'
                 });
+
+                if (configs.city === 'london') {
+                    const londonGeo = me.buildLondonRailGeoJSON();
+
+                    map.addSource('london-rail', {
+                        type: 'geojson',
+                        data: londonGeo
+                    });
+
+                    map.addLayer({
+                        id: 'london-railways',
+                        type: 'line',
+                        source: 'london-rail',
+                        filter: ['==', ['get', 'type'], 'railway'],
+                        paint: {
+                            'line-color': ['get', 'color'],
+                            'line-width': 4
+                        }
+                    }, 'trees');
+
+                    map.addLayer({
+                        id: 'london-stations',
+                        type: 'circle',
+                        source: 'london-rail',
+                        filter: ['==', ['get', 'type'], 'station'],
+                        paint: {
+                            'circle-radius': 4,
+                            'circle-color': '#ffffff',
+                            'circle-stroke-width': 2,
+                            'circle-stroke-color': '#000000'
+                        }
+                    }, 'trees');
+                }
 
                 for (const key of ['busroute', 'busroute-highlighted']) {
                     const width = key === 'busroute' ? ['get', 'width'] : ['*', ['get', 'width'], 4];
@@ -2340,7 +2740,7 @@ export default class extends Evented {
                 layerIds.add(`busstops-poi-${id}`);
 
                 const styleOpacities = me.styleOpacities,
-                    existingLayerIds = new Set(styleOpacities.map(({id}) => id));
+                    existingLayerIds = new Set(styleOpacities.map(({ id }) => id));
 
                 for (const item of helpersMapbox.getStyleOpacities(map, 'mt3d:opacity-effect')) {
                     if (!existingLayerIds.has(item.id)) {
@@ -2363,10 +2763,14 @@ export default class extends Evented {
     }
 
     refreshRealtimeTrainData() {
+        if (!configs.tidUrl) {
+            return;
+        }
+
         const me = this;
 
-        loadDynamicTrainData(me.secrets).then(({trainData, trainInfoData}) => {
-            const {activeTrainLookup, standbyTrainLookup, realtimeTrains, dataReferences} = me,
+        loadDynamicTrainData(me.secrets).then(({ trainData, trainInfoData }) => {
+            const { activeTrainLookup, standbyTrainLookup, realtimeTrains, dataReferences } = me,
                 now = me.clock.getTimeOffset();
 
             me.resetRailwayStatus();
@@ -2390,7 +2794,7 @@ export default class extends Evented {
             realtimeTrains.clear();
 
             for (const trainRef of trainData) {
-                const {id, r, n, y, d, os, ds, ts, fs, v, ad, delay, carComposition} = trainRef,
+                const { id, r, n, y, d, os, ds, ts, fs, v, ad, delay, carComposition } = trainRef,
                     aliasId = id.replace('.Marunouchi.', '.MarunouchiBranch.');
 
                 me.lastDynamicUpdate[trainRef.o] = trainRef.date;
@@ -2415,7 +2819,7 @@ export default class extends Evented {
                         me.stopTrain(activeTrain);
                     } else {
                         if (!activeTrain.timetable) {
-                            activeTrain.update({ts, fs}, dataReferences);
+                            activeTrain.update({ ts, fs }, dataReferences);
                         }
                         continue;
                     }
@@ -2433,9 +2837,9 @@ export default class extends Evented {
                     for (const timetable of timetables) {
                         const train = new Train(timetable);
 
-                        train.update({y, os, ds, v, ad, delay, carComposition}, dataReferences);
+                        train.update({ y, os, ds, v, ad, delay, carComposition }, dataReferences);
                         if (timetable.start + (delay || 0) <= now && now <= timetable.end + (delay || 0)) {
-                            me.trainStart(train, {marked, tracked});
+                            me.trainStart(train, { marked, tracked });
                         } else {
                             standbyTrainLookup.set(timetable.id, train);
                         }
@@ -2458,7 +2862,7 @@ export default class extends Evented {
                 }
 
                 // Start train without timetable
-                me.trainStart(new Train({id, r, n, y, d, os, ds, ts, fs, delay, carComposition}, dataReferences));
+                me.trainStart(new Train({ id, r, n, y, d, os, ds, ts, fs, delay, carComposition }, dataReferences));
             }
 
             // Stop trains if they are no longer active
@@ -2479,11 +2883,14 @@ export default class extends Evented {
     }
 
     refreshRealtimeFlightData() {
+        if (!configs.flightUrl && !configs.atisUrl) {
+            return;
+        }
         const me = this;
 
-        loadDynamicFlightData(me.secrets).then(({atisData, flightData}) => {
+        loadDynamicFlightData(me.secrets).then(({ atisData, flightData }) => {
             const flightLookup = me.flightLookup,
-                {landing, departure} = atisData,
+                { landing, departure } = atisData,
                 pattern = [landing.join('/'), departure.join('/')].join(' '),
                 codeShareFlights = {},
                 flightQueue = {};
@@ -2500,56 +2907,56 @@ export default class extends Evented {
             }
 
             if (helpers.includes(landing, ['R16L', 'R16R'])) { // South wind, good weather, rush hour
-                arrRoutes = {S: 'R16L', N: 'R16R'};
-                depRoutes = {S: '22', N: '16R'};
+                arrRoutes = { S: 'R16L', N: 'R16R' };
+                depRoutes = { S: '22', N: '16R' };
                 north = false;
             } else if (helpers.includes(landing, ['L22', 'L23'])) { // South wind, good weather
-                arrRoutes = {S: 'L23', N: 'L22'};
-                depRoutes = {S: 'O16R', N: '16L'};
+                arrRoutes = { S: 'L23', N: 'L22' };
+                depRoutes = { S: 'O16R', N: '16L' };
                 north = false;
             } else if (helpers.includes(landing, ['I16L', 'I16R'])) { // South wind, bad weather, rush hour
-                arrRoutes = {S: 'I16L', N: 'I16R'};
-                depRoutes = {S: '22', N: '16R'};
+                arrRoutes = { S: 'I16L', N: 'I16R' };
+                depRoutes = { S: '22', N: '16R' };
                 north = false;
             } else if (helpers.includes(landing, ['I22', 'I23'])) { // South wind, bad weather
-                arrRoutes = {S: 'I23', N: 'I22'};
-                depRoutes = {S: '16R', N: '16L'};
+                arrRoutes = { S: 'I23', N: 'I22' };
+                depRoutes = { S: '16R', N: '16L' };
                 north = false;
             } else if (helpers.includes(landing, ['I34L', 'H34R'])) { // North wind, good weather
-                arrRoutes = {S: 'IX34L', N: 'H34R'};
-                depRoutes = {S: '05', N: '34R'};
+                arrRoutes = { S: 'IX34L', N: 'H34R' };
+                depRoutes = { S: '05', N: '34R' };
                 north = true;
             } else if (helpers.includes(landing, ['I34L', 'I34R'])) { // North wind, bad weather
-                arrRoutes = {S: 'IZ34L', N: 'H34R'};
-                depRoutes = {S: '05', N: '34R'};
+                arrRoutes = { S: 'IZ34L', N: 'H34R' };
+                depRoutes = { S: '05', N: '34R' };
                 north = true;
             } else if (landing.length !== 1) {
                 console.log(`Unexpected RWY: ${landing}`);
             } else { // Midnight
                 if (helpers.includes(landing, 'I23')) {
-                    arrRoutes = {S: 'IY23', N: 'IY23'};
+                    arrRoutes = { S: 'IY23', N: 'IY23' };
                     north = false;
                 } else if (helpers.includes(landing, 'L23')) {
-                    arrRoutes = {S: 'LY23', N: 'LY23'};
+                    arrRoutes = { S: 'LY23', N: 'LY23' };
                     north = false;
                 } else if (helpers.includes(landing, 'I34L')) {
-                    arrRoutes = {S: 'IX34L', N: 'IX34L'};
+                    arrRoutes = { S: 'IX34L', N: 'IX34L' };
                     north = true;
                 } else if (helpers.includes(landing, 'I34R')) {
-                    arrRoutes = {S: 'IY34R', N: 'IY34R'};
+                    arrRoutes = { S: 'IY34R', N: 'IY34R' };
                     north = true;
                 } else if (helpers.includes(landing, 'L22')) { // Special
-                    arrRoutes = {S: 'L22', N: 'L22'};
+                    arrRoutes = { S: 'L22', N: 'L22' };
                     north = false;
                 } else {
                     console.log(`Unexpected LDG RWY: ${landing[0]}`);
                 }
                 if (helpers.includes(departure, '16L')) {
-                    depRoutes = {S: 'N16L', N: 'N16L'};
+                    depRoutes = { S: 'N16L', N: 'N16L' };
                 } else if (helpers.includes(departure, '05')) {
-                    depRoutes = {S: 'N05', N: 'N05'};
+                    depRoutes = { S: 'N05', N: 'N05' };
                 } else if (helpers.includes(departure, '16R')) { // Special
-                    depRoutes = {S: '16R', N: '16R'};
+                    depRoutes = { S: '16R', N: '16R' };
                 } else {
                     console.log(`Unexpected DEP RWY: ${departure[0]}`);
                 }
@@ -2558,7 +2965,7 @@ export default class extends Evented {
             // Create code share flight lookup
             for (const flightRef of flightData) {
                 if (helpers.includes(AIRLINES_FOR_ANA_CODE_SHARE, flightRef.a)) {
-                    const {dp, ds, sdt, or, ar, sat} = flightRef,
+                    const { dp, ds, sdt, or, ar, sat } = flightRef,
                         key = `${dp || or}.${ds || ar}.${sdt || sat}`;
 
                     codeShareFlights[key] = flightRef;
@@ -2566,10 +2973,10 @@ export default class extends Evented {
             }
 
             for (const flightRef of flightData) {
-                const {id, n, dp, ds, sdt, or, ar, sat} = flightRef;
+                const { id, n, dp, ds, sdt, or, ar, sat } = flightRef;
                 let flight = flightLookup.get(id),
                     status = flightRef.s,
-                    {maxFlightSpeed: maxSpeed, flightAcceleration: acceleration} = configs;
+                    { maxFlightSpeed: maxSpeed, flightAcceleration: acceleration } = configs;
 
                 // Check code share flight
                 if (id.match(/NH\d{4}$/)) {
@@ -2589,9 +2996,9 @@ export default class extends Evented {
                     const airport = me.airports.get(ds || or),
                         direction = airport ? airport.direction : 'S',
                         route = dp === 'NRT' ? `NRT.${north ? '34L' : '16R'}.Dep` :
-                        ar === 'NRT' ? `NRT.${north ? '34R' : '16L'}.Arr` :
-                        dp === 'HND' ? `HND.${depRoutes[direction]}.Dep` :
-                        ar === 'HND' ? `HND.${arrRoutes[direction]}.Arr` : undefined,
+                            ar === 'NRT' ? `NRT.${north ? '34R' : '16L'}.Arr` :
+                                dp === 'HND' ? `HND.${depRoutes[direction]}.Dep` :
+                                    ar === 'HND' ? `HND.${arrRoutes[direction]}.Arr` : undefined,
                         feature = me.featureLookup.get(route);
 
                     if (feature) {
@@ -2643,7 +3050,7 @@ export default class extends Evented {
                         status = 'OnTime';
                     }
                 }
-                flight.update({s: status}, {flightStatuses: me.flightStatuses});
+                flight.update({ s: status }, { flightStatuses: me.flightStatuses });
 
                 if (arrivalTime !== undefined) {
                     maxSpeed /= 2;
@@ -2702,7 +3109,7 @@ export default class extends Evented {
         const me = this;
 
         for (const gtfs of gtfsId ? [me.gtfs.get(gtfsId)] : me.gtfs.values()) {
-            const {id: gtfsId, vehiclePositionUrl, featureLookup, stopLookup, routeLookup, tripLookup, activeBusLookup, realtimeBuses} = gtfs;
+            const { id: gtfsId, vehiclePositionUrl, featureLookup, stopLookup, routeLookup, tripLookup, activeBusLookup, realtimeBuses } = gtfs;
 
             if (!vehiclePositionUrl) {
                 me.refreshBuses(gtfsId);
@@ -2713,7 +3120,7 @@ export default class extends Evented {
                 realtimeBuses.clear();
                 gtfs.date = me.clock.getString(data.header.timestamp * 1000);
 
-                for (const {id, vehicle: vp} of data.entity) {
+                for (const { id, vehicle: vp } of data.entity) {
                     if (!vp) {
                         continue;
                     }
@@ -2783,7 +3190,7 @@ export default class extends Evented {
     }
 
     updateUndergroundButton(mode) {
-        const {container, dict} = this,
+        const { container, dict } = this,
             button = container.querySelector('.mapboxgl-ctrl-underground');
 
         if (button) {
@@ -2800,7 +3207,7 @@ export default class extends Evented {
     }
 
     updatePlaybackButton(mode) {
-        const {container, dict} = this,
+        const { container, dict } = this,
             button = container.querySelector('.mapboxgl-ctrl-playback');
 
         if (button) {
@@ -2817,7 +3224,7 @@ export default class extends Evented {
     }
 
     updateEcoButton(mode) {
-        const {container, dict} = this,
+        const { container, dict } = this,
             button = container.querySelector('.mapboxgl-ctrl-eco');
 
         if (button) {
@@ -2835,7 +3242,7 @@ export default class extends Evented {
 
     refreshMap() {
         const me = this,
-            {viewMode, searchMode} = me,
+            { viewMode, searchMode } = me,
             isUndergroundMode = viewMode === 'underground',
             isNotSearchResultMode = searchMode === 'none' || searchMode === 'edit',
             factorKey = `mt3d:opacity${isUndergroundMode ? '-underground' : ''}`;
@@ -2867,7 +3274,7 @@ export default class extends Evented {
         me.updateUndergroundButton(mode);
         me.viewMode = mode;
         me.refreshMap();
-        me.fire({type: 'viewmode', mode});
+        me.fire({ type: 'viewmode', mode });
     }
 
     _setTrackingMode(mode) {
@@ -2884,7 +3291,7 @@ export default class extends Evented {
             me.updateHandlersAndControls();
             me.startViewAnimation();
         }
-        me.fire({type: 'trackingmode', mode});
+        me.fire({ type: 'trackingmode', mode });
     }
 
     _setClockMode(mode) {
@@ -2904,7 +3311,7 @@ export default class extends Evented {
         if (mode === 'playback') {
             me.resetRailwayStatus();
         }
-        me.fire({type: 'clockmode', mode});
+        me.fire({ type: 'clockmode', mode });
     }
 
     _setEcoMode(mode) {
@@ -2916,7 +3323,7 @@ export default class extends Evented {
 
         me.updateEcoButton(mode);
         me.ecoMode = mode;
-        me.fire({type: 'ecomode', mode});
+        me.fire({ type: 'ecomode', mode });
     }
 
     onClockChange() {
@@ -2944,7 +3351,7 @@ export default class extends Evented {
 
     pickObject(point) {
         const me = this,
-            {map, layerZoom} = me,
+            { map, layerZoom } = me,
             modes = ['ground', 'underground'];
         let object;
 
@@ -2957,7 +3364,7 @@ export default class extends Evented {
                 return object;
             }
             if (mode === 'ground') {
-                object = map.queryRenderedFeatures(point, {layers: [`stations-og-${layerZoom}`]})[0];
+                object = map.queryRenderedFeatures(point, { layers: [`stations-og-${layerZoom}`] })[0];
             } else {
                 object = pickObject(map, `stations-ug-${layerZoom}`, point);
             }
@@ -2969,7 +3376,7 @@ export default class extends Evented {
 
     markObject(object) {
         const me = this,
-            {markedObject, trafficLayer, map, popup} = me;
+            { markedObject, trafficLayer, map, popup } = me;
 
         if (isEqualObject(markedObject, object)) {
             return;
@@ -3018,7 +3425,7 @@ export default class extends Evented {
                     easing: 'easeOutBack'
                 }
             });
-            me.updatePopup({setHTML: true, addToMap: true});
+            me.updatePopup({ setHTML: true, addToMap: true });
         }
         me.updateAdTrainPopup();
         map.triggerRepaint();
@@ -3026,10 +3433,10 @@ export default class extends Evented {
 
     trackObject(object) {
         const me = this,
-            {searchMode, lang, map, trackedObject, trafficLayer, lastCameraParams, sharePanel, detailPanel} = me;
+            { searchMode, lang, map, trackedObject, trafficLayer, lastCameraParams, sharePanel, detailPanel } = me;
 
         if (searchMode === 'edit' && detailPanel && isStation(object)) {
-            const {title, utitle} = object.stations[0],
+            const { title, utitle } = object.stations[0],
                 stationTitle = (utitle && utitle[lang]) || helpers.normalize(title[lang] || title.en);
 
             detailPanel.fillStationName(stationTitle);
@@ -3067,14 +3474,14 @@ export default class extends Evented {
                 if (trackedObject.type === 'bus') {
                     me.updateBusTripHighlight(trackedObject);
                 }
-                me.fire({type: 'deselection', deselection: trackedObject.id});
+                me.fire({ type: 'deselection', deselection: trackedObject.id });
             } else if (isStation(trackedObject)) {
                 me.removeStationOutline('stations-selected');
-                me.fire({type: 'deselection', deselection: trackedObject.stations.map(({id}) => id)});
+                me.fire({ type: 'deselection', deselection: trackedObject.stations.map(({ id }) => id) });
                 me._setSearchMode('none');
                 me.hideStationExits();
             } else {
-                me.fire(Object.assign({type: 'deselection'}, trackedObject));
+                me.fire(Object.assign({ type: 'deselection' }, trackedObject));
             }
             me.updateHandlersAndControls();
             me.stopViewAnimation();
@@ -3100,14 +3507,14 @@ export default class extends Evented {
                 me._setViewMode(object.altitude < 0 ? 'underground' : 'ground');
 
                 if (helpers.includes(['train', 'flight'], object.type) && me.clockMode === 'realtime' && navigator.share) {
-                    me.sharePanel = new SharePanel({object});
+                    me.sharePanel = new SharePanel({ object });
                     me.sharePanel.addTo(me);
                 }
                 if (object.timetable) {
-                    me.detailPanel = new TrainPanel({object});
+                    me.detailPanel = new TrainPanel({ object });
                     me.detailPanel.addTo(me);
                 } else if (object.trip) {
-                    me.detailPanel = new BusPanel({object});
+                    me.detailPanel = new BusPanel({ object });
                     me.detailPanel.addTo(me);
                 }
 
@@ -3115,7 +3522,7 @@ export default class extends Evented {
                 if (object.type === 'bus') {
                     me.updateBusTripHighlight(object);
                 }
-                me.fire({type: 'selection', selection: object.id});
+                me.fire({ type: 'selection', selection: object.id });
             } else if (isStation(object)) {
                 const stations = object.stations.concat(object.hidden || []),
                     coords = stations.map(station => station.coord),
@@ -3145,22 +3552,22 @@ export default class extends Evented {
                         map.off('zoom', onZoom);
                     });
                 }
-                map.flyTo({center, zoom: 15.5});
+                map.flyTo({ center, zoom: 15.5 });
 
-                me.detailPanel = new StationPanel({object: stations});
+                me.detailPanel = new StationPanel({ object: stations });
                 me.detailPanel.addTo(me);
 
                 me.addStationOutline(object, 'stations-selected');
-                me.fire({type: 'selection', selection: object.stations.map(({id}) => id)});
+                me.fire({ type: 'selection', selection: object.stations.map(({ id }) => id) });
             } else {
-                me.fire(Object.assign({type: 'selection'}, object));
+                me.fire(Object.assign({ type: 'selection' }, object));
             }
         }
     }
 
     updateObjectPosition(object) {
-        const {altitude: prevAltitude, standing: prevStanding} = object,
-            {coord, altitude, bearing, _t} = this.trafficLayer.getObjectPosition(object);
+        const { altitude: prevAltitude, standing: prevStanding } = object,
+            { coord, altitude, bearing, _t } = this.trafficLayer.getObjectPosition(object);
         let viewMode, standing;
 
         object.coord = coord;
@@ -3177,7 +3584,7 @@ export default class extends Evented {
             // Set only when starting
             standing = object.standing;
         }
-        return {viewMode, standing};
+        return { viewMode, standing };
     }
 
     showAdTrainPopup(train) {
@@ -3243,7 +3650,7 @@ export default class extends Evented {
             const coords = [];
 
             me.exitPopups = exits.map((poi, index) => {
-                const {coord, facilities = []} = poi,
+                const { coord, facilities = [] } = poi,
                     icons = facilities.map(facility => `<span class="exit-${facility}-small-icon"></span>`).join(''),
                     listener = () => {
                         me.exitPopups[index] = setTimeout(() => {
@@ -3272,7 +3679,7 @@ export default class extends Evented {
                 bearing: map.getBearing(),
                 pitch: map.getPitch(),
                 offset: [0, -map.transform.height / 12],
-                padding: {top: 20, bottom: 20, left: 10, right: 50},
+                padding: { top: 20, bottom: 20, left: 10, right: 50 },
                 maxZoom: 18
             });
         }
@@ -3295,7 +3702,7 @@ export default class extends Evented {
 
     updateBaseZoom() {
         const me = this,
-            {map, trackedObject: object} = me;
+            { map, trackedObject: object } = me;
 
         if (isVehicle(object)) {
             const objectZ = me.getModelPosition(object.coord, object.altitude).z,
@@ -3307,8 +3714,8 @@ export default class extends Evented {
 
     updatePopup(options) {
         const me = this,
-            {markedObject, map, popup} = me,
-            {setHTML, addToMap} = options || {};
+            { markedObject, map, popup } = me,
+            { setHTML, addToMap } = options || {};
 
         if (isVehicle(markedObject)) {
             const bearing = markedObject === me.trackedObject ? map.getBearing() : undefined;
@@ -3317,8 +3724,8 @@ export default class extends Evented {
             if (setHTML) {
                 popup.setHTML(
                     markedObject.type === 'train' ? me.getTrainDescription(markedObject) :
-                    markedObject.type === 'flight' ? me.getFlightDescription(markedObject) :
-                    me.getBusDescription(markedObject)
+                        markedObject.type === 'flight' ? me.getFlightDescription(markedObject) :
+                            me.getBusDescription(markedObject)
                 );
             }
         } else {
@@ -3377,9 +3784,9 @@ export default class extends Evented {
             }
             for (const id of gtfs.featureLookup.keys()) {
                 if (shapes.has(id)) {
-                    map.removeFeatureState({source, id}, 'hidden');
+                    map.removeFeatureState({ source, id }, 'hidden');
                 } else {
-                    map.setFeatureState({source, id}, {hidden: true});
+                    map.setFeatureState({ source, id }, { hidden: true });
                 }
             }
             for (const bus of gtfs.activeBusLookup.values()) {
@@ -3403,12 +3810,12 @@ export default class extends Evented {
                 route = gtfs.routeLookup.get(routeId);
 
             for (const id of route.shapes) {
-                map.setFeatureState({source: gtfsId, id}, {'route-highlight': route.color || gtfs.color});
+                map.setFeatureState({ source: gtfsId, id }, { 'route-highlight': route.color || gtfs.color });
             }
         } else {
             for (const gtfs of me.gtfs.values()) {
                 for (const id of gtfs.featureLookup.keys()) {
-                    map.removeFeatureState({source: gtfs.id, id}, 'route-highlight');
+                    map.removeFeatureState({ source: gtfs.id, id }, 'route-highlight');
                 }
             }
         }
@@ -3416,8 +3823,8 @@ export default class extends Evented {
 
     updateBusTripHighlight(object) {
         const me = this,
-            {map, markedObject, trackedObject} = me,
-            {gtfsId, trip} = object,
+            { map, markedObject, trackedObject } = me,
+            { gtfsId, trip } = object,
             source = gtfsId,
             id = trip.shape;
 
@@ -3426,9 +3833,9 @@ export default class extends Evented {
             const gtfs = me.gtfs.get(gtfsId),
                 color = gtfs.routeLookup.get(trip.route).color;
 
-            map.setFeatureState({source, id}, {'trip-highlight': color || gtfs.color});
+            map.setFeatureState({ source, id }, { 'trip-highlight': color || gtfs.color });
         } else {
-            map.removeFeatureState({source, id}, 'trip-highlight');
+            map.removeFeatureState({ source, id }, 'trip-highlight');
         }
     }
 
@@ -3466,7 +3873,7 @@ export default class extends Evented {
 
     setSectionData(train, index, final) {
         const stations = train.r.stations,
-            {direction, timetable} = train,
+            { direction, timetable } = train,
             destination = (train.ds || [])[0],
             delay = train.delay || 0,
             now = this.clock.getTimeOffset();
