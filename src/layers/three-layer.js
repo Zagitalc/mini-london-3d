@@ -22,6 +22,7 @@ export default class {
         me.map = map;
         me.modelOrigin = map.getModelOrigin();
 
+        const fallbackId = beforeId && _mbox.getLayer(beforeId) ? beforeId : (_mbox.getLayer('poi') ? 'poi' : null);
         _mbox.addLayer({
             id,
             type: 'custom',
@@ -56,7 +57,7 @@ export default class {
                 }
             },
             render: me._render.bind(me)
-        }, beforeId || 'poi');
+        }, fallbackId || undefined);
         _mbox.setLayerZoomRange(id, implementation.minzoom, implementation.maxzoom);
     }
 

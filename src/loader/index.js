@@ -10,6 +10,7 @@ import operators from './operators';
 import airports from './airports';
 import flightStatuses from './flight-statuses';
 import poi from './poi';
+import london from './london';
 
 async function main() {
     const city = process.env.MT3D_CITY || 'tokyo';
@@ -21,7 +22,7 @@ async function main() {
 
     // London MVP: only generate railways + stations (static map)
     if (city === 'london') {
-        console.log('London mode: skipping features/timetables/directions/types/vehicles/operators/airports/flights/poi');
+        await london();
         return;
     }
 

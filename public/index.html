@@ -76,6 +76,13 @@
         };
       const cfg = window.MT3D_CONFIG || {};
       if (cfg.accessToken) options.accessToken = cfg.accessToken;
+      if (cfg.secrets) {
+        options.secrets = cfg.secrets;
+      } else if (cfg.tflAppKey || cfg.tflKey || cfg.tfl_key) {
+        options.secrets = {
+          tflAppKey: cfg.tflAppKey || cfg.tflKey || cfg.tfl_key,
+        };
+      }
 
       if (matchLang) {
         options.lang = decodeURIComponent(matchLang[1]);

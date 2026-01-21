@@ -95,20 +95,27 @@ export function loadStaticData(dataUrl, lang, clockPromise, city) {
             loadJSON(`assets/dictionary-${lang}.json`),
             loadJSON(`${dataUrl}/railways.json.gz`),
             loadJSON(`${dataUrl}/stations.json.gz`),
-            clockPromise
-        ]).then(([dict, railwayData, stationData]) => ({
+            loadJSON(`${dataUrl}/features.json.gz`),
+            loadJSON(`${dataUrl}/rail-directions.json.gz`),
+            loadJSON(`${dataUrl}/train-types.json.gz`),
+            loadJSON(`${dataUrl}/train-vehicles.json.gz`),
+            clockPromise.then(clock => Promise.all([
+                getTimetableFileName(clock),
+                ...getExtraTimetableFileNames(clock)
+            ].map(fileName => `${dataUrl}/${fileName}`).map(loadJSON))).then(data => [].concat(...data))
+        ]).then(([dict, railwayData, stationData, featureCollection, railDirectionData, trainTypeData, trainVehicleData, timetableData]) => ({
             dict,
             railwayData,
             stationData,
-            featureCollection: { type: 'FeatureCollection', features: [] },
-            railDirectionData: [],
-            trainTypeData: [],
-            trainVehicleData: [],
+            featureCollection,
+            railDirectionData,
+            trainTypeData,
+            trainVehicleData,
             operatorData: [],
             airportData: [],
             flightStatusData: [],
             poiData: [],
-            timetableData: []
+            timetableData
         }));
     }
 
