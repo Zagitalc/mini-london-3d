@@ -1,5 +1,6 @@
-import {AmbientLight, Color, DirectionalLight, LinearSRGBColorSpace, MathUtils, Matrix4, Mesh, PerspectiveCamera, Scene, Vector3, WebGLRenderer} from 'three';
-import {valueOrDefault} from '../helpers/helpers';
+import { AmbientLight, Color, DirectionalLight, LinearSRGBColorSpace, MathUtils, Matrix4, Mesh, PerspectiveCamera, Scene, Vector3, WebGLRenderer } from 'three';
+import { valueOrDefault } from '../helpers/helpers';
+import { MercatorCoordinate } from 'mapbox-gl';
 
 const SQRT3 = Math.sqrt(3);
 
@@ -20,7 +21,9 @@ export default class {
             _mbox = map.map;
 
         me.map = map;
-        me.modelOrigin = map.getModelOrigin();
+        // Use existing model origin or fallback to map center so 3D layers compute
+        // positions consistently even if origin wasn't set earlier.
+        me.modelOrigin = map.getModelOrigin() || MercatorCoordinate.fromLngLat(map.getCenter());
 
         const fallbackId = beforeId && _mbox.getLayer(beforeId) ? beforeId : (_mbox.getLayer('poi') ? 'poi' : null);
         _mbox.addLayer({
@@ -63,7 +66,7 @@ export default class {
 
     _onAdd(mbox, gl) {
         const me = this,
-            {_fov, width, height} = mbox.transform,
+            { _fov, width, height } = mbox.transform,
             renderer = me.renderer = new WebGLRenderer({
                 canvas: mbox.getCanvas(),
                 context: gl
@@ -75,6 +78,14 @@ export default class {
 
         renderer.outputColorSpace = LinearSRGBColorSpace;
         renderer.autoClear = false;
+        renderer.debug.checkShaderErrors = true;
+        renderer.debug.onShaderError = (glContext, program, vertexShader, fragmentShader) => {
+            const vLog = glContext.getShaderInfoLog(vertexShader);
+            const fLog = glContext.getShaderInfoLog(fragmentShader);
+            const pLog = glContext.getProgramInfoLog(program);
+            console.error('[MT3D shader error]', { vLog, fLog, pLog });
+        };
+        renderer.getContext().getExtension('EXT_color_buffer_float');
 
         scene.add(light);
         scene.add(ambientLight);
@@ -118,8 +129,8 @@ export default class {
 
     _render(gl, matrix) {
         // These parameters are copied from mapbox-gl/src/geo/transform.js
-        const {modelOrigin, mbox, renderer, camera, light, scene} = this,
-            {_fov, _camera, _horizonShift, pixelsPerMeter, worldSize, _pitch, width, height} = mbox.transform,
+        const { modelOrigin, mbox, renderer, camera, light, scene } = this,
+            { _fov, _camera, _horizonShift, pixelsPerMeter, worldSize, _pitch, width, height } = mbox.transform,
             halfFov = _fov / 2,
             cameraToSeaLevelDistance = _camera.position[2] * worldSize / Math.cos(_pitch),
             horizonDistance = cameraToSeaLevelDistance / _horizonShift,

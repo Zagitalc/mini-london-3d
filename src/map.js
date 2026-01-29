@@ -14,7 +14,7 @@ import * as helpersGeojson from './helpers/helpers-geojson';
 import * as helpersMapbox from './helpers/helpers-mapbox';
 import { GeoJsonLayer, ThreeLayer, Tile3DLayer, TrafficLayer } from './layers';
 import { loadBusData, loadDynamicBusData, loadDynamicFlightData, loadDynamicTrainData, loadStaticData, loadTimetableData, updateOdptUrl } from './loader';
-import { AboutPanel, BusPanel, LayerPanel, SharePanel, StationPanel, TrackingModePanel, TrainPanel } from './panels';
+import { AboutPanel, BusPanel, LayerPanel, SharePanel, StationPanel, TrainPanel } from './panels';
 import Plugin from './plugin';
 import nearestCloserPointOnLine from './turf/nearest-closer-point-on-line';
 
@@ -23,6 +23,7 @@ const RAILWAY_NAMBOKU = 'TokyoMetro.Namboku',
     RAILWAY_ARAKAWA = 'Toei.Arakawa';
 
 const AIRLINES_FOR_ANA_CODE_SHARE = ['ADO', 'SFJ', 'SNJ'];
+const LONDON_DEFAULT_SEGMENT_SPEED_KM_PER_SEC = 0.012;
 
 const DEGREE_TO_RADIAN = Math.PI / 180;
 
@@ -89,12 +90,33 @@ export default class extends Evented {
         const qs = typeof location !== 'undefined' ? new URLSearchParams(location.search) : null;
         const city = (qs && qs.get('city')) || configs.city;
         me.city = city;
-        me.useLondonLiveTrains = options.useLondonLiveTrains !== undefined ? options.useLondonLiveTrains : (city === 'london');
+        const defaultCenter = configs.defaultCenter;
+        let hasCustomCenter = false;
+        if (Array.isArray(options.center) && Array.isArray(defaultCenter)) {
+            hasCustomCenter = options.center.length !== defaultCenter.length ||
+                !options.center.every((value, index) => value === defaultCenter[index]);
+        }
+        me._lockModelOrigin = city === 'london' && hasCustomCenter;
+        me.useLondonLiveTrains = city === 'london'
+            ? true
+            : (options.useLondonLiveTrains !== undefined ? options.useLondonLiveTrains : false);
+        me.useLondonLiveTrains3d = city === 'london'
+            ? true
+            : (options.useLondonLiveTrains3d !== undefined ? options.useLondonLiveTrains3d : false);
+
+        // Ensure Mercator projection for custom 3D layers (London trains)
+        if (city === 'london' && !options.projection) {
+            options.projection = 'mercator';
+        }
 
         // Use local build data when running London (or localhost), otherwise use default dataUrl.
-        me.dataUrl = (city === 'london' || (typeof location !== 'undefined' && location.hostname === 'localhost'))
-            ? 'data'
-            : options.dataUrl;
+        if (city === 'london' || (typeof location !== 'undefined' && location.hostname === 'localhost')) {
+            const path = typeof location !== 'undefined' ? location.pathname : '';
+            const servingBuildDir = /(^|\/)build(\/|$)/.test(path);
+            me.dataUrl = servingBuildDir ? 'build/data' : 'data';
+        } else {
+            me.dataUrl = options.dataUrl;
+        }
 
         const secrets = options.secrets || {};
         const dataSources = Array.isArray(options.dataSources) ? options.dataSources : [];
@@ -694,6 +716,26 @@ export default class extends Evented {
         me.adTrains = new Set();
         me.activeFlightLookup = new Map();
         me.flightLookup = new Map();
+
+        if (me.getCityFromLocation() === 'london' && me.featureCollection && !me._lockModelOrigin) {
+            const bounds = new LngLatBounds();
+            featureEach(me.featureCollection, feature => {
+                if (!feature || !feature.geometry) return;
+                const { type, coordinates } = feature.geometry;
+                if (type === 'Point' && Array.isArray(coordinates)) {
+                    bounds.extend(coordinates);
+                } else if (type === 'LineString' && Array.isArray(coordinates)) {
+                    for (const coord of coordinates) bounds.extend(coord);
+                } else if (type === 'MultiLineString' && Array.isArray(coordinates)) {
+                    for (const line of coordinates) {
+                        for (const coord of line) bounds.extend(coord);
+                    }
+                }
+            });
+            if (!bounds.isEmpty()) {
+                me.modelOrigin = MercatorCoordinate.fromLngLat(bounds.getCenter());
+            }
+        }
     }
 
     initialize() {
@@ -720,7 +762,8 @@ export default class extends Evented {
 
         const isLondon = me.getCityFromLocation() === 'london';
         const hasLondonRoutes = isLondon && me.featureCollection && (me.featureCollection.features || []).length > 0;
-        const enableTrafficLayer = !isLondon || (hasLondonRoutes && !me.useLondonLiveTrains);
+        const useLondonLiveTrains3d = isLondon && me.useLondonLiveTrains && me.useLondonLiveTrains3d;
+        const enableTrafficLayer = !isLondon || (hasLondonRoutes && (!me.useLondonLiveTrains || useLondonLiveTrains3d));
 
         // TrafficLayer (deck.gl compute/WebGL) requires full route/features datasets.
         // London mode uses a safe no-op stub unless features/timetables are available.
@@ -860,6 +903,37 @@ export default class extends Evented {
             data: helpersGeojson.featureFilter(featureCollection, p => p.altitude === 0)
         });
 
+        // London: add a deck.gl rail line layer so 3D trains align with the line at pitch.
+        if (isLondon && featureCollection && (featureCollection.features || []).length) {
+            for (const zoom of [13, 14, 15, 16, 17, 18]) {
+                const lineWidthScale =
+                    zoom === 13 ? helpers.clamp(Math.pow(2, initialZoom - 12), .125, 1) :
+                        zoom === 18 ? helpers.clamp(Math.pow(2, initialZoom - 19), 1, 8) : 1;
+                const lineData = helpersGeojson.featureFilter(featureCollection, p =>
+                    p.zoom === zoom && p.type === 0
+                );
+                if (!lineData.features.length) continue;
+                const layerId = `london-railways-3d-${zoom}`;
+                me.addLayer({
+                    id: layerId,
+                    type: 'geojson',
+                    data: lineData,
+                    filled: false,
+                    getLineWidth: d => d.properties.width || 8,
+                    getLineColor: d => helpers.colorToRGBArray(d.properties.color || '#0098D4'),
+                    lineWidthUnits: 'pixels',
+                    lineWidthScale,
+                    parameters: { depthTest: false },
+                    minzoom: zoom <= 13 ? 0 : zoom,
+                    maxzoom: zoom >= 18 ? 24 : zoom + 1
+                }, 'trees');
+                if (map.getLayer(layerId)) {
+                    map.setLayoutProperty(layerId, 'visibility', 'visible');
+                }
+            }
+            me._londonHas3dRailLines = true;
+        }
+
 
 
         // London fallback rendering (when features.json etc. are not generated)
@@ -872,6 +946,11 @@ export default class extends Evented {
                     map.getSource('london-rail').setData(londonGeo);
                     if (map.getLayer('london-railways')) map.moveLayer('london-railways');
                     if (map.getLayer('london-stations')) map.moveLayer('london-stations');
+                    if (me._londonHas3dRailLines && useLondonLiveTrains3d && map.getLayer('london-railways')) {
+                        map.setLayoutProperty('london-railways', 'visibility', 'none');
+                    } else if (map.getLayer('london-railways')) {
+                        map.setLayoutProperty('london-railways', 'visibility', 'visible');
+                    }
                 } else {
                     map.addSource('london-rail', {
                         type: 'geojson',
@@ -893,6 +972,10 @@ export default class extends Evented {
                             'line-opacity': 0.95
                         }
                     });
+
+                    if (me._londonHas3dRailLines && useLondonLiveTrains3d) {
+                        map.setLayoutProperty('london-railways', 'visibility', 'none');
+                    }
 
                     map.addLayer({
                         id: 'london-stations',
@@ -933,36 +1016,8 @@ export default class extends Evented {
             }
 
             // London live trains: Victoria line using TfL arrivals predictions.
-            if (me.useLondonLiveTrains) {
-                try {
-                    if (!map.getSource('london-trains')) {
-                        map.addSource('london-trains', {
-                            type: 'geojson',
-                            data: helpersGeojson.emptyFeatureCollection()
-                        });
-
-                        map.addLayer({
-                            id: 'london-trains',
-                            type: 'circle',
-                            source: 'london-trains',
-                            paint: {
-                                'circle-radius': 4,
-                                'circle-color': ['coalesce', ['get', 'color'], '#0066ff'],
-                                'circle-stroke-width': 1,
-                                'circle-stroke-color': '#ffffff',
-                                'circle-opacity': 0.95
-                            }
-                        });
-
-                        // Keep it on top of the fallback layers
-                        map.moveLayer('london-trains');
-                    }
-
-                    // Start polling TfL if we have station data.
-                    me.startLondonLiveTrains({ lineId: 'victoria', pollMs: 10000 });
-                } catch (err) {
-                    console.error('[London live trains] init failed', err);
-                }
+            if (useLondonLiveTrains3d) {
+                me._pendingLondonLiveTrains3d = { lineId: 'victoria', pollMs: 10000 };
             }
 
             me.initLondonHoverPopups();
@@ -1053,8 +1108,20 @@ export default class extends Evented {
 
             me.trafficLayer.addRouteGroup(routeData);
             me.trafficLayer.addColorGroup(colorData);
+            if (isLondon && routeData.length) {
+                me._londonTrafficLayerReady = true;
+            }
         } else {
             console.log('[London] skipping TrafficLayer route groups (missing features dataset)');
+        }
+
+        if (useLondonLiveTrains3d && me._pendingLondonLiveTrains3d) {
+            if (me.ensureLondonTrafficLayer()) {
+                me.startLondonLiveTrains(me._pendingLondonLiveTrains3d);
+                delete me._pendingLondonLiveTrains3d;
+            } else {
+                console.warn('[London live trains] TrafficLayer not ready yet');
+            }
         }
 
         /* For development
@@ -1167,7 +1234,6 @@ export default class extends Evented {
         }
 
         me.layerPanel = new LayerPanel({ layers: me.plugins });
-        me.trackingModePanel = new TrackingModePanel();
         me.aboutPanel = new AboutPanel();
 
         if (me.configControl) {
@@ -1176,12 +1242,6 @@ export default class extends Evented {
                 title: dict['select-layers'],
                 eventHandler() {
                     me.layerPanel.addTo(me);
-                }
-            }, {
-                className: 'mapboxgl-ctrl-tracking-mode',
-                title: dict['select-tracking-mode'],
-                eventHandler() {
-                    me.trackingModePanel.addTo(me);
                 }
             }, {
                 className: 'mapboxgl-ctrl-about',
@@ -1412,14 +1472,26 @@ export default class extends Evented {
             });
         }
 
+        const getRailwayLineCoords = (railway) => {
+            const feature = me.featureLookup && me.featureLookup.get(`${railway.id}.13`);
+            const geometry = feature && feature.geometry;
+
+            if (geometry && geometry.type === 'LineString' && Array.isArray(geometry.coordinates)) {
+                return geometry.coordinates;
+            }
+
+            const coords = [];
+            for (const st of railway.stations || []) {
+                if (st && Array.isArray(st.coord)) coords.push(st.coord);
+            }
+            return coords;
+        };
+
         // Add each railway as ONE continuous LineString through its stations (London fallback)
         for (const rw of me.railways.getAll()) {
             if (!rw || !Array.isArray(rw.stations) || rw.stations.length < 2) continue;
 
-            const coords = [];
-            for (const st of rw.stations) {
-                if (st && Array.isArray(st.coord)) coords.push(st.coord);
-            }
+            const coords = getRailwayLineCoords(rw);
             if (coords.length < 2) continue;
 
             fc.features.push({
@@ -1439,42 +1511,398 @@ export default class extends Evented {
         return fc;
     }
 
+    normalizeLondonStationKey(name) {
+        if (!name) return '';
+        return helpers.normalize(String(name))
+            .replace(/Underground Station/ig, '')
+            .replace(/&/g, 'and')
+            .replace(/[^a-zA-Z0-9 ]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toUpperCase();
+    }
+
+    resolveLondonStationInfo(name, stationLookup, stationNameKeys) {
+        const me = this;
+        const normalized = me.normalizeLondonStationKey(name);
+        if (!normalized || !stationLookup) return null;
+        if (stationLookup.has(normalized)) return stationLookup.get(normalized);
+        if (!stationNameKeys || stationNameKeys.size === 0) return null;
+
+        const findByPrefix = (key) => {
+            let best = null;
+            let bestDelta = Infinity;
+            for (const candidate of stationNameKeys) {
+                if (candidate.startsWith(key) || key.startsWith(candidate)) {
+                    const delta = Math.abs(candidate.length - key.length);
+                    if (delta < bestDelta) {
+                        bestDelta = delta;
+                        best = candidate;
+                    }
+                }
+            }
+            return best ? stationLookup.get(best) : null;
+        };
+
+        let key = normalized;
+        let match = findByPrefix(key);
+        if (match) return match;
+
+        // Retry by trimming trailing short tokens (handles truncations like "ST P")
+        const tokens = key.split(' ');
+        while (tokens.length > 1) {
+            const last = tokens[tokens.length - 1];
+            if (last.length > 2) break;
+            tokens.pop();
+            key = tokens.join(' ');
+            match = findByPrefix(key);
+            if (match) return match;
+        }
+
+        return null;
+    }
+
+    getLondonRailwayByLineId(lineId) {
+        const me = this;
+        if (!me.railways) return null;
+        return me.railways.get(`tfl.${lineId}`) || me.railways.get(lineId);
+    }
+
+    getLondonStationIndexLookup(railway) {
+        const me = this;
+        if (!railway) return null;
+        if (!me._londonStationIndexLookup) {
+            me._londonStationIndexLookup = new Map();
+        }
+        if (!me._londonStationIndexLookup.has(railway.id)) {
+            const lookup = new Map();
+            railway.stations.forEach((st, index) => {
+                lookup.set(st.id, index);
+            });
+            me._londonStationIndexLookup.set(railway.id, lookup);
+        }
+        return me._londonStationIndexLookup.get(railway.id);
+    }
+
+    updateLondonLiveTrafficTrains(arrivals, stationLookup, railway, stationNameKeys) {
+        const me = this;
+        if (!railway || !me.trafficLayer || !me.trafficLayer.addObject) return;
+
+        const stationIndexLookup = me.getLondonStationIndexLookup(railway);
+        if (!stationIndexLookup) return;
+
+        const routeFeature = me.featureLookup && me.featureLookup.get(`${railway.id}.13`);
+        const stationOffsets = routeFeature && routeFeature.properties && routeFeature.properties['station-offsets'];
+        if (!Array.isArray(stationOffsets) || stationOffsets.length < 2) return;
+
+        if (!me._londonLiveTrafficTrains) {
+            me._londonLiveTrafficTrains = new Map();
+        }
+
+        const nowOffset = me.clock.getTimeOffset();
+        const byTrain = new Map();
+        const arr = Array.isArray(arrivals) ? arrivals : [];
+
+        const parseBetween = (location) => {
+            const match = String(location || '').match(/between\\s+(.+?)\\s+and\\s+(.+)/i);
+            return match ? { from: match[1].trim(), to: match[2].trim() } : null;
+        };
+        const resolveStationInfo = (value) => me.resolveLondonStationInfo(value, stationLookup, stationNameKeys);
+
+        for (const a of arr) {
+            if (!a) continue;
+            const vehicleId = a.vehicleId || '';
+            const direction = a.direction || '';
+            const dest = a.destinationName || '';
+            const stationName = a.stationName || '';
+            const naptanId = a.naptanId || '';
+            const currentLocation = a.currentLocation || '';
+            let tts = typeof a.timeToStation === 'number' ? a.timeToStation : Number(a.timeToStation);
+            if (!isFinite(tts) && a.expectedArrival) {
+                const expected = Date.parse(a.expectedArrival);
+                if (isFinite(expected)) {
+                    tts = Math.max(0, (expected - Date.now()) / 1000);
+                }
+            }
+            if (!isFinite(tts)) continue;
+
+            const key = `${vehicleId || 'no-vehicle'}|${direction}|${dest}`;
+            if (!byTrain.has(key)) {
+                byTrain.set(key, {
+                    key,
+                    vehicleId: vehicleId || key,
+                    direction,
+                    dest,
+                    currentLocation,
+                    arrivals: []
+                });
+            }
+            const entry = byTrain.get(key);
+            if (!entry.currentLocation && currentLocation) {
+                entry.currentLocation = currentLocation;
+            }
+            entry.arrivals.push({
+                stationName,
+                naptanId,
+                timeToStation: tts,
+                currentLocation
+            });
+        }
+
+        const seen = new Set();
+        for (const t of byTrain.values()) {
+            const predictions = [];
+            for (const a of t.arrivals) {
+                const stationKey = a.naptanId ? String(a.naptanId).toUpperCase() : me.normalizeLondonStationKey(a.stationName);
+                const stationInfo = stationLookup.get(stationKey) || resolveStationInfo(a.stationName);
+                if (!stationInfo || !stationInfo.station) continue;
+                const index = stationIndexLookup.get(stationInfo.station.id);
+                if (index === undefined) continue;
+                predictions.push({
+                    station: stationInfo.station,
+                    stationIndex: index,
+                    timeToStation: a.timeToStation,
+                    stationName: a.stationName
+                });
+            }
+            if (!predictions.length) continue;
+
+            predictions.sort((a, b) => a.timeToStation - b.timeToStation);
+            const predictionsByIndex = new Map();
+            for (const p of predictions) {
+                const existing = predictionsByIndex.get(p.stationIndex);
+                if (!existing || p.timeToStation < existing.timeToStation) {
+                    predictionsByIndex.set(p.stationIndex, p);
+                }
+            }
+
+            let prevStation = null;
+            let nextStation = null;
+            let prevIndex = undefined;
+            let progress = 0;
+            let durationSec = null;
+
+            // Keep using currentLocation to find prev/next stations as a hint
+            const location = String(t.currentLocation || '');
+            const locationLower = location.toLowerCase();
+            const between = parseBetween(location);
+
+            if (between && between.from) {
+                prevStation = resolveStationInfo(between.from)?.station || null;
+                if (between.to) {
+                    nextStation = resolveStationInfo(between.to)?.station || null;
+                }
+            } else if (locationLower.startsWith('approaching ')) {
+                const name = location.replace(/approaching\\s+/i, '').replace(/\\s+platform.*$/i, '');
+                nextStation = resolveStationInfo(name)?.station || null;
+            } else if (locationLower.startsWith('left ')) {
+                const name = location.replace(/left\\s+/i, '').replace(/\\s+platform.*$/i, '');
+                prevStation = resolveStationInfo(name)?.station || null;
+            } else if (locationLower.startsWith('leaving ')) {
+                const name = location.replace(/leaving\\s+/i, '').replace(/\\s+platform.*$/i, '');
+                prevStation = resolveStationInfo(name)?.station || null;
+            } else if (locationLower.startsWith('departed ')) {
+                const name = location.replace(/departed\\s+from\\s+/i, '').replace(/departed\\s+/i, '').replace(/\\s+platform.*$/i, '');
+                prevStation = resolveStationInfo(name)?.station || null;
+            } else if (locationLower.startsWith('at ')) {
+                const name = location.replace(/at\\s+/i, '').replace(/\\s+platform.*$/i, '');
+                prevStation = resolveStationInfo(name)?.station || null;
+            }
+
+            if (prevStation) {
+                prevIndex = stationIndexLookup.get(prevStation.id);
+            }
+
+            const nextIndexHint = nextStation ? stationIndexLookup.get(nextStation.id) : undefined;
+            let next = null;
+            if (nextIndexHint !== undefined) {
+                next = predictionsByIndex.get(nextIndexHint) || null;
+            }
+            if (!next && prevIndex !== undefined) {
+                next = predictions.find(p => p.stationIndex !== prevIndex) || null;
+            }
+            if (!next) {
+                next = predictions[0];
+            }
+            if (!next) continue;
+            const nextIndex = next.stationIndex;
+
+            let following = null;
+            for (const p of predictions) {
+                if (p.stationIndex !== nextIndex && p.timeToStation >= next.timeToStation) {
+                    following = p;
+                    break;
+                }
+            }
+
+            let directionStep = 0;
+            if (following && stationOffsets[nextIndex] !== undefined &&
+                stationOffsets[following.stationIndex] !== undefined) {
+                directionStep = stationOffsets[following.stationIndex] > stationOffsets[nextIndex] ? 1 : -1;
+            } else if (t.direction === 'outbound') {
+                directionStep = 1;
+            } else if (t.direction === 'inbound') {
+                directionStep = -1;
+            }
+
+            if (prevIndex === undefined && directionStep) {
+                prevIndex = nextIndex - directionStep;
+                if (prevIndex < 0 || prevIndex >= railway.stations.length) {
+                    prevIndex = undefined;
+                } else {
+                    prevStation = railway.stations[prevIndex];
+                }
+            }
+
+            if (prevIndex === undefined || prevIndex === nextIndex) {
+                continue;
+            }
+            if (prevIndex < 0 || nextIndex < 0 || prevIndex >= stationOffsets.length || nextIndex >= stationOffsets.length) {
+                continue;
+            }
+
+            const sectionLength = nextIndex - prevIndex;
+            let segmentLength = null;
+
+            if (stationOffsets && stationOffsets.length > Math.max(prevIndex, nextIndex)) {
+                const offsetPrev = stationOffsets[prevIndex];
+                const offsetNext = stationOffsets[nextIndex];
+
+                if (isFinite(offsetPrev) && isFinite(offsetNext)) {
+                    segmentLength = Math.abs(offsetNext - offsetPrev);
+                    if (segmentLength > 0) {
+                        // Time-based duration calculation
+                        if (following && following.timeToStation > next.timeToStation &&
+                            stationOffsets[following.stationIndex] !== undefined) {
+                            // Calculate speed from the next segment (next -> following)
+                            const offsetFollowing = stationOffsets[following.stationIndex];
+                            const timeForNextSegment = Math.max(1, following.timeToStation - next.timeToStation);
+                            const distanceOfNextSegment = Math.abs(offsetFollowing - offsetNext);
+                            const speed = distanceOfNextSegment / timeForNextSegment;
+
+                            // Apply that speed to the current segment
+                            durationSec = segmentLength / Math.max(0.0015, Math.min(0.03, speed));
+                        } else {
+                            // Fallback to default speed
+                            durationSec = segmentLength / LONDON_DEFAULT_SEGMENT_SPEED_KM_PER_SEC;
+                        }
+                    }
+                }
+            }
+
+            if (!durationSec) {
+                // If we couldn't calculate duration from distance, estimate it.
+                // Fallback to a simple time-based estimation. Assume the train is
+                // halfway through the segment, so the total segment duration is
+                // double the time remaining.
+                durationSec = next.timeToStation * 2;
+            }
+
+            // Ensure duration is valid and at least covers the time to the next station
+            if (isFinite(durationSec)) {
+                durationSec = Math.max(durationSec, Math.max(15, next.timeToStation * 1.05));
+            } else {
+                continue; // Cannot proceed without a valid duration
+            }
+
+            // This is the new time-based progress calculation
+            const safeTimeToStation = Math.max(0.1, next.timeToStation);
+            progress = 1 - (safeTimeToStation / durationSec);
+
+            // Clamp progress to a valid range
+            if (!isFinite(progress)) {
+                continue;
+            }
+            progress = Math.max(0, Math.min(0.99, progress));
+
+            // Keep the smoothing logic from the original implementation
+            let train = me._londonLiveTrafficTrains.get(t.key);
+            if (train && train.sectionIndex === prevIndex && train.sectionLength === sectionLength &&
+                typeof train._londonProgress === 'number') {
+                let predictedProgress = train._londonProgress;
+                if (typeof train._londonDurationSec === 'number' && typeof train._londonLastUpdate === 'number') {
+                    const elapsedSec = Math.max(0, (nowOffset - train._londonLastUpdate) / 1000);
+                    predictedProgress = train._londonProgress + (elapsedSec / Math.max(train._londonDurationSec, 0.1));
+                }
+                // Only use predicted progress if it's greater than the API-derived progress
+                if (predictedProgress > progress) {
+                    progress = Math.min(0.99, predictedProgress);
+                }
+            }
+
+            const duration = durationSec * 1000;
+            const startTime = nowOffset - progress * duration;
+            const accelTime = duration / 2;
+            const accel = 4 / (duration * duration);
+
+            if (train) {
+                train._londonProgress = progress;
+            }
+            if (!train) {
+                train = {
+                    type: 'train',
+                    id: t.key,
+                    n: t.vehicleId || t.key,
+                    r: railway,
+                    d: railway.ascending,
+                    liveTfL: true
+                };
+                me._londonLiveTrafficTrains.set(t.key, train);
+            }
+            train._londonProgress = progress;
+            train._londonDurationSec = durationSec;
+            train._londonLastUpdate = nowOffset;
+
+            train.sectionIndex = prevIndex;
+            train.sectionLength = sectionLength;
+            train.departureStation = prevStation;
+            train.arrivalStation = next.station;
+            train.destinationName = t.dest;
+            train.timeToStation = next.timeToStation;
+            train.currentLocation = t.currentLocation;
+            train.d = sectionLength >= 0 ? railway.descending : railway.ascending;
+
+            if (train.instanceID === undefined) {
+                me.trafficLayer.addObject(train);
+            }
+            me.trafficLayer.updateObject(train, startTime, duration, accelTime, accel, accelTime, accel);
+            seen.add(t.key);
+        }
+
+        for (const [key, train] of me._londonLiveTrafficTrains.entries()) {
+            if (!seen.has(key)) {
+                me.trafficLayer.removeObject(train);
+                me._londonLiveTrafficTrains.delete(key);
+            }
+        }
+    }
+
     initLondonHoverPopups() {
         const me = this;
 
-        if (me._londonHoverInitialized || !me.map) {
+        if (!me.map) {
             return;
         }
 
         const map = me.map;
-        const stationPopup = me._londonStationHoverPopup = new AnimatedPopup({
-            className: 'popup-object',
-            closeButton: false,
-            closeOnClick: false,
-            maxWidth: '260px',
-            offset: {
-                top: [0, 10],
-                bottom: [0, -20]
-            },
-            openingAnimation: {
-                duration: 150,
-                easing: 'easeOutBack'
-            }
-        });
-        const trainPopup = me._londonTrainHoverPopup = new AnimatedPopup({
-            className: 'popup-object',
-            closeButton: false,
-            closeOnClick: false,
-            maxWidth: '260px',
-            offset: {
-                top: [0, 10],
-                bottom: [0, -20]
-            },
-            openingAnimation: {
-                duration: 150,
-                easing: 'easeOutBack'
-            }
-        });
+
+        if (!me._londonStationHoverPopup) {
+            me._londonStationHoverPopup = new AnimatedPopup({
+                className: 'popup-object',
+                closeButton: false,
+                closeOnClick: false,
+                maxWidth: '260px',
+                offset: {
+                    top: [0, 10],
+                    bottom: [0, -20]
+                },
+                openingAnimation: {
+                    duration: 150,
+                    easing: 'easeOutBack'
+                }
+            });
+        }
+        const stationPopup = me._londonStationHoverPopup;
 
         const hidePopup = (popup) => {
             if (popup && popup.isOpen()) popup.remove();
@@ -1484,7 +1912,7 @@ export default class extends Evented {
             popup.setLngLat(lngLat).setHTML(html).addTo(map);
         };
 
-        if (map.getLayer('london-stations')) {
+        if (map.getLayer('london-stations') && !me._londonHoverStationsBound) {
             map.on('mousemove', 'london-stations', (e) => {
                 const feature = e.features && e.features[0];
                 if (!feature) return;
@@ -1496,34 +1924,75 @@ export default class extends Evented {
                 hidePopup(stationPopup);
                 map.getCanvas().style.cursor = '';
             });
+            me._londonHoverStationsBound = true;
         }
 
-        if (map.getLayer('london-trains')) {
-            map.on('mousemove', 'london-trains', (e) => {
-                const feature = e.features && e.features[0];
-                if (!feature) return;
-                const props = feature.properties || {};
-                const trainId = props.id ? `Train ${props.id}` : 'Train';
-                const dest = props.destination ? ` → ${props.destination}` : '';
-                const eta = typeof props.timeToStation === 'number' ? ` · ETA ${Math.round(props.timeToStation / 60)} min` : '';
-                const loc = props.currentLocation ? `<div class="desc">${props.currentLocation}</div>` : '';
-                const html = `${trainId}${dest}${eta}${loc}`;
-                showPopup(trainPopup, e.lngLat, html);
-                map.getCanvas().style.cursor = 'pointer';
-            });
-            map.on('mouseleave', 'london-trains', () => {
-                hidePopup(trainPopup);
-                map.getCanvas().style.cursor = '';
-            });
+        // 2D train hover popups removed (London uses 3D trains only).
+    }
+
+    ensureLondonTrafficLayer() {
+        const me = this;
+
+        if (!me.featureLookup || !me.railways) {
+            console.warn('[London] missing features for TrafficLayer');
+            return false;
         }
 
-        me._londonHoverInitialized = true;
+        if (!me.trafficLayer || me.trafficLayer.type !== 'three') {
+            me.trafficLayer = new TrafficLayer({ id: 'traffic' });
+            me.addLayer(me.trafficLayer, 'trees');
+        }
+
+        if (!me.trafficLayer.computeRenderer) {
+            console.warn('[London] TrafficLayer not ready yet');
+            return false;
+        }
+
+        if (me._londonTrafficLayerReady) {
+            return true;
+        }
+
+        const routeData = [];
+        const colorData = [];
+
+        for (const { id, color } of me.railways.getAll()) {
+            const features = [13, 14, 15, 16, 17, 18].map(zoom => me.featureLookup.get(`${id}.${zoom}`));
+            if (features.some(f => !f)) {
+                console.warn('[London] missing route features for', id);
+                continue;
+            }
+            routeData.push({ id, feature: features });
+            colorData.push({ id, color });
+        }
+
+        if (!routeData.length) {
+            console.warn('[London] no route data for TrafficLayer');
+            return false;
+        }
+
+        me.trafficLayer.addRouteGroup(routeData);
+        me.trafficLayer.addColorGroup(colorData);
+        me._londonTrafficLayerReady = true;
+        return true;
+    }
+
+    clearLondonLiveTrafficTrains() {
+        const me = this;
+        if (!me._londonLiveTrafficTrains || !me.trafficLayer || !me.trafficLayer.removeObject) {
+            me._londonLiveTrafficTrains = new Map();
+            return;
+        }
+
+        for (const train of me._londonLiveTrafficTrains.values()) {
+            me.trafficLayer.removeObject(train);
+        }
+        me._londonLiveTrafficTrains.clear();
     }
 
     /**
      * London live trains (Path B MVP).
      * Uses TfL `/Line/{lineId}/Arrivals` predictions to render moving dots.
-     * Note: This is not true GPS positions; we place the dot at the next predicted station.
+     * Note: Not true GPS positions; we place the dot at the next predicted station.
      */
     startLondonLiveTrains({ lineId = 'victoria', pollMs = 10000 } = {}) {
         const me = this;
@@ -1533,40 +2002,47 @@ export default class extends Evented {
             me._londonLiveTrainsTimer = null;
         }
 
-        if (!me.map || !me.map.getSource('london-trains')) {
-            console.warn('[London live trains] missing map or london-trains source');
+        if (!me.map) {
+            console.warn('[London live trains] missing map instance');
+            return;
+        }
+        if (!me.ensureLondonTrafficLayer()) {
+            if (!me._londonLiveTrainsRetry && me.map) {
+                me._londonLiveTrainsRetry = true;
+                me.map.once('idle', () => {
+                    me._londonLiveTrainsRetry = false;
+                    me.startLondonLiveTrains({ lineId, pollMs });
+                });
+            }
             return;
         }
 
-        // Build a lookup from station name/naptanId -> { lng, lat, color }.
+        // Build a lookup from station name/naptanId -> { station, lng, lat, color }.
         const stationLookup = new Map();
+        const stationNameKeys = new Set();
         if (me.stations) {
             for (const st of me.stations.getAll()) {
                 if (!st || !st.coord || !st.title) continue;
                 const name = (st.title.en || st.title.ja || '').trim();
                 if (!name) continue;
-                const norm = helpers.normalize(name).toUpperCase();
-                const normShort = helpers.normalize(name.replace(/ Underground Station$/i, '')).toUpperCase();
-                stationLookup.set(norm, {
+                const norm = me.normalizeLondonStationKey(name);
+                const normShort = me.normalizeLondonStationKey(name.replace(/ Underground Station$/i, ''));
+                const info = {
+                    station: st,
                     lng: st.coord[0],
                     lat: st.coord[1],
                     color: st.railway?.color
-                });
+                };
+                stationLookup.set(norm, info);
+                if (norm) stationNameKeys.add(norm);
                 if (normShort) {
-                    stationLookup.set(normShort, {
-                        lng: st.coord[0],
-                        lat: st.coord[1],
-                        color: st.railway?.color
-                    });
+                    stationLookup.set(normShort, info);
+                    stationNameKeys.add(normShort);
                 }
                 if (st.id) {
                     const naptan = String(st.id).split('.').pop();
                     if (naptan) {
-                        stationLookup.set(naptan.toUpperCase(), {
-                            lng: st.coord[0],
-                            lat: st.coord[1],
-                            color: st.railway?.color
-                        });
+                        stationLookup.set(naptan.toUpperCase(), info);
                     }
                 }
             }
@@ -1575,12 +2051,8 @@ export default class extends Evented {
         const tick = async () => {
             try {
                 const arrivals = await me.fetchTfLJson(`/Line/${encodeURIComponent(lineId)}/Arrivals`);
-                const features = me.buildLondonTrainFeaturesFromArrivals(arrivals, stationLookup, lineId);
-                const src = me.map.getSource('london-trains');
-                if (src) {
-                    src.setData({ type: 'FeatureCollection', features });
-                    if (me.map.getLayer('london-trains')) me.map.moveLayer('london-trains');
-                }
+                const railway = me.getLondonRailwayByLineId(lineId);
+                me.updateLondonLiveTrafficTrains(arrivals, stationLookup, railway, stationNameKeys);
             } catch (e) {
                 // Common causes: missing/invalid app key, network/CORS, TfL rate limit
                 console.warn('[London live trains] poll failed:', e);
@@ -1622,67 +2094,6 @@ export default class extends Evented {
         });
     }
 
-    buildLondonTrainFeaturesFromArrivals(arrivals, stationLookup, lineId) {
-        // Group by vehicleId if available; otherwise fall back to a composite key.
-        const byTrain = new Map();
-        const arr = Array.isArray(arrivals) ? arrivals : [];
-
-        for (const a of arr) {
-            if (!a) continue;
-            const vehicleId = a.vehicleId || '';
-            const direction = a.direction || '';
-            const dest = a.destinationName || '';
-            const currentLocation = a.currentLocation || '';
-            const stationName = a.stationName || '';
-            const tts = typeof a.timeToStation === 'number' ? a.timeToStation : Number(a.timeToStation);
-            if (!isFinite(tts)) continue;
-
-            const key = `${vehicleId || 'no-vehicle'}|${direction}|${dest}`;
-            const prev = byTrain.get(key);
-            if (!prev || tts < prev.timeToStation) {
-                byTrain.set(key, {
-                    timeToStation: tts,
-                    stationName,
-                    vehicleId: vehicleId || null,
-                    direction,
-                    dest,
-                    currentLocation,
-                    naptanId: a.naptanId || ''
-                });
-            }
-        }
-
-        const features = [];
-        for (const [key, t] of byTrain) {
-            const naptanKey = t.naptanId ? String(t.naptanId).toUpperCase() : '';
-            const norm = helpers.normalize(String(t.stationName)).toUpperCase();
-            const normShort = helpers.normalize(String(t.stationName).replace(/ Underground Station$/i, '')).toUpperCase();
-            const st = (naptanKey && stationLookup.get(naptanKey)) ||
-                stationLookup.get(norm) ||
-                stationLookup.get(normShort);
-            if (!st) continue;
-
-            features.push({
-                type: 'Feature',
-                geometry: {
-                    type: 'Point',
-                    coordinates: [st.lng, st.lat]
-                },
-                properties: {
-                    type: 'train',
-                    id: t.vehicleId || key,
-                    line: lineId,
-                    direction: t.direction,
-                    destination: t.dest,
-                    timeToStation: t.timeToStation,
-                    currentLocation: t.currentLocation,
-                    color: st.color || '#0066ff'
-                }
-            });
-        }
-
-        return features;
-    }
 
     _jumpTo(options) {
         const me = this,
@@ -2373,6 +2784,14 @@ export default class extends Evented {
             delay = train.delay || 0,
             arrivalTime = helpers.valueOrDefault(train.arrivalTime, train.nextDepartureTime),
             status = railway.status;
+
+        if (train.liveTfL) {
+            const etaMin = typeof train.timeToStation === 'number' ? Math.round(train.timeToStation / 60) : null;
+            const dest = train.destinationName ? ` → ${train.destinationName}` : '';
+            const eta = etaMin !== null ? ` · ETA ${etaMin} min` : '';
+            const loc = train.currentLocation ? `<br>${train.currentLocation}` : '';
+            return `<strong>Train ${train.n || train.id}</strong>${dest}${eta}${loc}`;
+        }
 
         return [
             '<div class="desc-header">',

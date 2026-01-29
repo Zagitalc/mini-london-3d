@@ -250,27 +250,47 @@ export function setSunlight(map, time) {
  * @returns {boolean} True if the background color of the map is dark
  */
 export function hasDarkBackground(map, actual) {
-    const light = map.getLights().filter(({type}) => type === 'ambient')[0],
-        lightColorElements = parseCSSColor(light.properties.color),
-        lightIntensity = light.properties.intensity,
-        lr = lightColorElements[0] / 255 * lightIntensity,
-        lg = lightColorElements[1] / 255 * lightIntensity,
-        lb = lightColorElements[2] / 255 * lightIntensity;
+    try {
+        if (!map || !map.getLights) return false;
+        const lights = map.getLights() || [],
+            light = lights.find(item => item && item.type === 'ambient');
 
-    if (actual) {
+        if (!light || !light.properties || !light.properties.color) return false;
+
+        const lightColorElements = parseCSSColor(light.properties.color);
+        if (!lightColorElements || lightColorElements.length < 3) return false;
+
+        const lightIntensity = valueOrDefault(light.properties.intensity, 1),
+            lr = lightColorElements[0] / 255 * lightIntensity,
+            lg = lightColorElements[1] / 255 * lightIntensity,
+            lb = lightColorElements[2] / 255 * lightIntensity;
+
+        if (actual) {
+            return BG_LAYER_IDS.reduce((value, id) => {
+                const layer = map.style && map.style.getOwnLayer ? map.style.getOwnLayer(id) : null;
+                const paintProperties = layer && layer.paint;
+                if (!paintProperties || typeof paintProperties.get !== 'function') return value;
+                const color = paintProperties.get('background-color'),
+                    a = valueOrDefault(paintProperties.get('background-opacity'), 1);
+                if (!color) return value;
+                const {r, g, b} = color;
+                return value + luminance({r: r * lr * a, g: g * lg * a, b: b * lb * a});
+            }, 0) < .5;
+        }
+
         return BG_LAYER_IDS.reduce((value, id) => {
-            const paintProperties = map.style.getOwnLayer(id).paint,
-                {r, g, b} = paintProperties.get('background-color'),
-                a = paintProperties.get('background-opacity');
+            if (!map.getPaintProperty) return value;
+            const colorProp = map.getPaintProperty(id, 'background-color');
+            if (!colorProp) return value;
+            const rgb = parseCSSColor(colorProp);
+            if (!rgb || rgb.length < 3) return value;
+            const [r, g, b] = rgb,
+                a = valueOrDefault(map.getPaintProperty(id, 'background-opacity'), 1);
             return value + luminance({r: r * lr * a, g: g * lg * a, b: b * lb * a});
-        }, 0) < .5;
+        }, 0) < 127.5;
+    } catch (e) {
+        return false;
     }
-
-    return BG_LAYER_IDS.reduce((value, id) => {
-        const [r, g, b] = parseCSSColor(map.getPaintProperty(id, 'background-color')),
-            a = valueOrDefault(map.getPaintProperty(id, 'background-opacity'), 1);
-        return value + luminance({r: r * lr * a, g: g * lg * a, b: b * lb * a});
-    }, 0) < 127.5;
 }
 
 /**

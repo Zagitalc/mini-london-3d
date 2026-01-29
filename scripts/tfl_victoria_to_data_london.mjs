@@ -1,8 +1,8 @@
 // scripts/tfl_victoria_to_data_london.mjs
 import fs from "node:fs/promises";
 
-const APP_ID = process.env.TFL_APP_ID || "867fc6b8db7d4ef1a33467f82f25958e";
-const APP_KEY = process.env.TFL_APP_KEY || "a6611e48deff48a0aa16acaa0fa5f9c8";
+const APP_ID = process.env.TFL_APP_ID || "";
+const APP_KEY = process.env.TFL_APP_KEY || "";
 
 function tfl(url) {
     const u = new URL(url);

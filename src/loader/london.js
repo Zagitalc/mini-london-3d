@@ -1,5 +1,7 @@
 import nearestPointOnLine from '@turf/nearest-point-on-line';
 import turfLength from '@turf/length';
+import turfDistance from '@turf/distance';
+import lineSliceAlong from '@turf/line-slice-along';
 import {lineString, point} from '@turf/helpers';
 import {updateDistances} from '../helpers/helpers-geojson';
 import {loadJSON, saveJSON} from './helpers';
@@ -35,7 +37,57 @@ function buildRailDirections(railways) {
     return Array.from(directions.values());
 }
 
-function buildFeatures(railways, stationLookup) {
+function buildGeometryLookup(data) {
+    if (!data) return new Map();
+    if (Array.isArray(data)) {
+        return new Map(data.filter(Boolean).map(entry => [entry.id, entry.coordinates || entry.coords || []]));
+    }
+    if (typeof data === 'object') {
+        return new Map(Object.entries(data).map(([id, coordinates]) => [id, coordinates || []]));
+    }
+    return new Map();
+}
+
+function reorderLineByStations(lineCoords, stationCoords) {
+    if (!Array.isArray(lineCoords) || lineCoords.length < 2 || !Array.isArray(stationCoords) || stationCoords.length < 2) {
+        return lineCoords;
+    }
+    const line = lineString(lineCoords);
+    const length = turfLength(line);
+    if (!isFinite(length) || length <= 0) return lineCoords;
+
+    const stationOffsets = stationCoords.map(coord =>
+        nearestPointOnLine(line, point(coord)).properties.location
+    );
+    const startOffset = stationOffsets[0] ?? 0;
+
+    const unwrapped = stationOffsets.map(offset =>
+        offset >= startOffset ? offset - startOffset : offset - startOffset + length
+    );
+    let inversions = 0;
+    for (let i = 1; i < unwrapped.length; i++) {
+        if (unwrapped[i] < unwrapped[i - 1]) inversions++;
+    }
+    const shouldReverse = inversions > unwrapped.length / 2;
+
+    const looped = turfDistance(point(lineCoords[0]), point(lineCoords[lineCoords.length - 1])) < 0.2;
+
+    let reordered = lineCoords;
+    if (looped && startOffset > 0) {
+        const first = lineSliceAlong(line, startOffset, length);
+        const second = lineSliceAlong(line, 0, startOffset);
+        const coords = first.geometry.coordinates.concat(second.geometry.coordinates.slice(1));
+        reordered = coords;
+    }
+
+    if (shouldReverse) {
+        reordered = reordered.slice().reverse();
+    }
+
+    return reordered;
+}
+
+function buildFeatures(railways, stationLookup, geometryLookup) {
     const features = [];
 
     for (const railway of railways) {
@@ -49,9 +101,15 @@ function buildFeatures(railways, stationLookup) {
             stationCoords.push(station.coord);
         }
 
-        if (coords.length < 2) continue;
+        const geometryCoords = geometryLookup && geometryLookup.get(railway.id);
+        const baseLineCoords = Array.isArray(geometryCoords) && geometryCoords.length >= 2
+            ? geometryCoords
+            : coords;
 
-        const line = lineString(coords);
+        if (baseLineCoords.length < 2) continue;
+
+        const lineCoords = reorderLineByStations(baseLineCoords, stationCoords);
+        const line = lineString(lineCoords);
         const length = turfLength(line);
         const stationOffsets = stationCoords.map(coord =>
             nearestPointOnLine(line, point(coord)).properties.location
@@ -62,7 +120,7 @@ function buildFeatures(railways, stationLookup) {
                 type: 'Feature',
                 geometry: {
                     type: 'LineString',
-                    coordinates: coords
+                    coordinates: lineCoords
                 },
                 properties: {
                     id: `${railway.id}.${zoom}`,
@@ -156,9 +214,11 @@ export default async function () {
         loadJSON(`${DATA_DIR}/railways.json`),
         loadJSON(`${DATA_DIR}/stations.json`)
     ]);
+    const geometryData = await loadJSON(`${DATA_DIR}/railway-geometries.json`).catch(() => null);
+    const geometryLookup = buildGeometryLookup(geometryData);
 
     const stationLookup = new Map(stations.map(st => [st.id, st]));
-    const featureCollection = buildFeatures(railways, stationLookup);
+    const featureCollection = buildFeatures(railways, stationLookup, geometryLookup);
     const railDirections = buildRailDirections(railways);
     const timetables = buildTimetables(railways);
 

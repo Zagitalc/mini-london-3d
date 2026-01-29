@@ -1,11 +1,11 @@
 import animation from '../animation';
 import configs from '../configs';
 import ComputeRenderer from '../gpgpu/compute-renderer';
-import {lerp} from '../helpers/helpers';
-import {hasDarkBackground} from '../helpers/helpers-mapbox';
-import {AircraftMeshSet, BusMeshSet, CarMeshSet} from '../mesh-sets';
-import {Point} from 'mapbox-gl';
-import {Color, Scene, WebGLRenderTarget, Vector3} from 'three';
+import { lerp } from '../helpers/helpers';
+import { hasDarkBackground } from '../helpers/helpers-mapbox';
+import { AircraftMeshSet, BusMeshSet, CarMeshSet } from '../mesh-sets';
+import { Point, MercatorCoordinate } from 'mapbox-gl';
+import { Color, Scene, WebGLRenderTarget, Vector3 } from 'three';
 
 const MAX_UG_CARS = 1000;
 const MAX_OG_CARS = 2500;
@@ -30,19 +30,28 @@ export default class {
             scene = context.scene,
             zoom = map.getZoom(),
             cameraZ = map.map.getFreeCameraOptions().position.z,
-            modelOrigin = map.getModelOrigin(),
-            modelScale = map.getModelScale(),
             chunkSize = context.renderer.capabilities.maxTextureSize;
+
+        // Ensure we have a valid modelOrigin (fallback to map center)
+        let modelOrigin = map.getModelOrigin();
+        if (!modelOrigin) {
+            modelOrigin = MercatorCoordinate.fromLngLat(map.getCenter());
+        }
 
         me.map = map;
         me.context = context;
+        // map.getModelScale() depends on modelOrigin; if absent use fallback computation
+        me.baseModelScale = (typeof map.getModelScale === 'function' && map.getModelOrigin()) ? map.getModelScale() : modelOrigin.meterInMercatorCoordinateUnits();
+        me.isLondon = map.getCityFromLocation && map.getCityFromLocation() === 'london';
+        me.getModelScaleForZoom = () => me.baseModelScale;
+        const modelScale = me.getModelScaleForZoom(zoom);
 
-        me.computeRenderer = new ComputeRenderer(MAX_UG_CARS + MAX_OG_CARS + MAX_AIRCRAFTS + MAX_BUSES, {modelOrigin, chunkSize});
+        me.computeRenderer = new ComputeRenderer(MAX_UG_CARS + MAX_OG_CARS + MAX_AIRCRAFTS + MAX_BUSES, { modelOrigin, chunkSize });
 
-        const ugCarMeshSet = me.ugCarMeshSet = new CarMeshSet(MAX_UG_CARS, {zoom, cameraZ, modelScale}),
-            ogCarMeshSet = me.ogCarMeshSet = new CarMeshSet(MAX_OG_CARS, {zoom, cameraZ, modelScale}),
-            aircraftMeshSet = me.aircraftMeshSet = new AircraftMeshSet(MAX_AIRCRAFTS, {zoom, cameraZ, modelScale}),
-            busMeshSet = me.busMeshSet = new BusMeshSet(MAX_BUSES, {zoom, cameraZ, modelScale});
+        const ugCarMeshSet = me.ugCarMeshSet = new CarMeshSet(MAX_UG_CARS, { zoom, cameraZ, modelScale }),
+            ogCarMeshSet = me.ogCarMeshSet = new CarMeshSet(MAX_OG_CARS, { zoom, cameraZ, modelScale }),
+            aircraftMeshSet = me.aircraftMeshSet = new AircraftMeshSet(MAX_AIRCRAFTS, { zoom, cameraZ, modelScale }),
+            busMeshSet = me.busMeshSet = new BusMeshSet(MAX_BUSES, { zoom, cameraZ, modelScale });
 
         scene.add(ugCarMeshSet.getMesh());
         scene.add(ogCarMeshSet.getMesh());
@@ -103,7 +112,14 @@ export default class {
 
     prerender(map, context) {
         const me = this,
-            textures = me.computeRenderer.compute(context, map.layerZoom);
+            dtRoute = me.computeRenderer && me.computeRenderer.dtRoute,
+            dtColor = me.computeRenderer && me.computeRenderer.dtColor;
+
+        if (!me.computeRenderer || !dtRoute || dtRoute.floatTexture.size === 0 || !dtColor || dtColor.texture.size === 0) {
+            return;
+        }
+
+        const textures = me.computeRenderer.compute(context, map.layerZoom);
 
         me.ugCarMeshSet.setTextures(textures);
         me.ogCarMeshSet.setTextures(textures);
@@ -127,7 +143,8 @@ export default class {
             map = me.map,
             cameraParams = {
                 zoom: map.getZoom(),
-                cameraZ: map.map.getFreeCameraOptions().position.z
+                cameraZ: map.map.getFreeCameraOptions().position.z,
+                modelScale: me.getModelScaleForZoom ? me.getModelScaleForZoom(map.getZoom()) : undefined
             };
 
         me.ugCarMeshSet.refreshCameraParams(cameraParams);
@@ -183,7 +200,7 @@ export default class {
         let objectType, routeIndex, colorIndex, sectionIndex, nextSectionIndex, delay;
 
         if (object.type === 'train') {
-            const {id, r, v, ad} = object;
+            const { id, r, v, ad } = object;
 
             objectType = 0;
             routeIndex = me.computeRenderer.getRouteIndex(r.id);
@@ -200,7 +217,7 @@ export default class {
             nextSectionIndex = sectionIndex + object.sectionLength;
             delay = object.delay ? 1 : 0;
         } else if (object.type === 'flight') {
-            const {a, feature} = object;
+            const { a, feature } = object;
 
             objectType = 1;
             routeIndex = me.computeRenderer.getRouteIndex(feature.properties.id);
@@ -208,7 +225,7 @@ export default class {
             sectionIndex = 0;
             nextSectionIndex = 1;
         } else {
-            const {gtfsId, feature, offsets: stopOffsets} = object;
+            const { gtfsId, feature, offsets: stopOffsets } = object;
 
             objectType = 2;
             routeIndex = me.computeRenderer.getRouteIndex(`${gtfsId}.${feature.properties.id}`);
@@ -252,7 +269,7 @@ export default class {
 
     removeObject(object) {
         const me = this,
-            {instanceID, colorGroupIndex} = object;
+            { instanceID, colorGroupIndex } = object;
 
         if (instanceID !== undefined) {
             me.objects.delete(instanceID);
@@ -270,8 +287,8 @@ export default class {
 
     pickObject(mode, point) {
         const me = this,
-            {pickingTexture, pixelBuffer} = me,
-            {renderer, camera} = me.context,
+            { pickingTexture, pixelBuffer } = me,
+            { renderer, camera } = me.context,
             rendererContext = renderer.getContext(),
             pixelRatio = window.devicePixelRatio,
             scene = mode === 'underground' ? me.ugPickingScene : me.ogPickingScene;
@@ -335,10 +352,10 @@ export default class {
     }
 
     project(lnglat, altitude) {
-        const {map, context} = this,
-            {width, height} = map.map.transform,
-            {x, y, z} = map.getModelPosition(lnglat, altitude),
-            {x: px, y: py} = new Vector3(x, y, z).project(context.camera);
+        const { map, context } = this,
+            { width, height } = map.map.transform,
+            { x, y, z } = map.getModelPosition(lnglat, altitude),
+            { x: px, y: py } = new Vector3(x, y, z).project(context.camera);
 
         return new Point((px + 1) / 2 * width, (1 - py) / 2 * height);
     }
