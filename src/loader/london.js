@@ -2,9 +2,9 @@ import nearestPointOnLine from '@turf/nearest-point-on-line';
 import turfLength from '@turf/length';
 import turfDistance from '@turf/distance';
 import lineSliceAlong from '@turf/line-slice-along';
-import {lineString, point} from '@turf/helpers';
-import {updateDistances} from '../helpers/helpers-geojson';
-import {loadJSON, saveJSON} from './helpers';
+import { lineString, point } from '@turf/helpers';
+import { updateDistances } from '../helpers/helpers-geojson';
+import { loadJSON, saveJSON } from './helpers';
 
 const DATA_DIR = process.env.MT3D_DATA_DIR || 'data';
 const ZOOMS = [13, 14, 15, 16, 17, 18];
@@ -27,10 +27,10 @@ function buildRailDirections(railways) {
 
     for (const railway of railways) {
         if (railway.ascending && !directions.has(railway.ascending)) {
-            directions.set(railway.ascending, {id: railway.ascending, title: {en: railway.ascending}});
+            directions.set(railway.ascending, { id: railway.ascending, title: { en: railway.ascending } });
         }
         if (railway.descending && !directions.has(railway.descending)) {
-            directions.set(railway.descending, {id: railway.descending, title: {en: railway.descending}});
+            directions.set(railway.descending, { id: railway.descending, title: { en: railway.descending } });
         }
     }
 
@@ -156,16 +156,16 @@ function buildTimetablesForRailway(railway, stationIds, directionId, directionSl
             const s = stationIds[i];
 
             if (i === 0) {
-                tt.push({s, d: toTimeString(t)});
+                tt.push({ s, d: toTimeString(t) });
                 continue;
             }
 
             t += DEMO_TRAVEL_MIN;
 
             if (i === stationIds.length - 1) {
-                tt.push({s, a: toTimeString(t)});
+                tt.push({ s, a: toTimeString(t) });
             } else {
-                tt.push({s, a: toTimeString(t), d: toTimeString(t + DEMO_DWELL_MIN)});
+                tt.push({ s, a: toTimeString(t), d: toTimeString(t + DEMO_DWELL_MIN) });
                 t += DEMO_DWELL_MIN;
             }
         }
@@ -233,5 +233,4 @@ export default async function () {
     saveJSON('build/data/timetable-saturday.json.gz', timetables);
     saveJSON('build/data/timetable-sunday-holiday.json.gz', timetables);
 
-    console.log('London MVP features and demo timetables were generated');
 }

@@ -24,6 +24,7 @@ const RAILWAY_NAMBOKU = 'TokyoMetro.Namboku',
 
 const AIRLINES_FOR_ANA_CODE_SHARE = ['ADO', 'SFJ', 'SNJ'];
 const LONDON_DEFAULT_SEGMENT_SPEED_KM_PER_SEC = 0.012;
+const LONDON_OVERLAP_PROGRESS_SPACING = 0.02;
 
 const DEGREE_TO_RADIAN = Math.PI / 180;
 
@@ -1626,7 +1627,15 @@ export default class extends Evented {
             }
             if (!isFinite(tts)) continue;
 
-            const key = `${vehicleId || 'no-vehicle'}|${direction}|${dest}`;
+            const fallbackKeyParts = [
+                direction,
+                dest,
+                a.destinationNaptanId || '',
+                a.towards || '',
+                a.platformName || ''
+            ].filter(Boolean);
+            const fallbackKey = fallbackKeyParts.join('|') || `${stationName}|${direction}|${dest}`;
+            const key = vehicleId ? `${vehicleId}|${direction}|${dest}` : `no-vehicle|${fallbackKey}`;
             if (!byTrain.has(key)) {
                 byTrain.set(key, {
                     key,
@@ -1641,16 +1650,34 @@ export default class extends Evented {
             if (!entry.currentLocation && currentLocation) {
                 entry.currentLocation = currentLocation;
             }
+            const expectedArrival = a.expectedArrival ? Date.parse(a.expectedArrival) : NaN;
             entry.arrivals.push({
                 stationName,
                 naptanId,
                 timeToStation: tts,
-                currentLocation
+                currentLocation,
+                expectedArrival
             });
         }
 
         const seen = new Set();
+        const pendingUpdates = [];
+        const preserveTrain = (train, patch = {}) => {
+            if (!train) return false;
+            if (typeof train._londonProgress === 'number' &&
+                typeof train._londonDurationSec === 'number' &&
+                typeof train._londonLastUpdate === 'number') {
+                const elapsedSec = Math.max(0, (nowOffset - train._londonLastUpdate) / 1000);
+                const predicted = train._londonProgress + (elapsedSec / Math.max(train._londonDurationSec, 0.1));
+                train._londonProgress = Math.max(0, Math.min(0.99, predicted));
+            }
+            Object.assign(train, patch);
+            train._londonLastUpdate = nowOffset;
+            seen.add(train.id || train.key);
+            return true;
+        };
         for (const t of byTrain.values()) {
+            let train = me._londonLiveTrafficTrains.get(t.key);
             const predictions = [];
             for (const a of t.arrivals) {
                 const stationKey = a.naptanId ? String(a.naptanId).toUpperCase() : me.normalizeLondonStationKey(a.stationName);
@@ -1662,10 +1689,17 @@ export default class extends Evented {
                     station: stationInfo.station,
                     stationIndex: index,
                     timeToStation: a.timeToStation,
-                    stationName: a.stationName
+                    stationName: a.stationName,
+                    expectedArrival: a.expectedArrival
                 });
             }
-            if (!predictions.length) continue;
+            if (!predictions.length) {
+                preserveTrain(train, {
+                    destinationName: t.dest,
+                    currentLocation: t.currentLocation
+                });
+                continue;
+            }
 
             predictions.sort((a, b) => a.timeToStation - b.timeToStation);
             const predictionsByIndex = new Map();
@@ -1724,7 +1758,13 @@ export default class extends Evented {
             if (!next) {
                 next = predictions[0];
             }
-            if (!next) continue;
+            if (!next) {
+                preserveTrain(train, {
+                    destinationName: t.dest,
+                    currentLocation: t.currentLocation
+                });
+                continue;
+            }
             const nextIndex = next.stationIndex;
 
             let following = null;
@@ -1743,6 +1783,8 @@ export default class extends Evented {
                 directionStep = 1;
             } else if (t.direction === 'inbound') {
                 directionStep = -1;
+            } else if (train && typeof train.sectionLength === 'number') {
+                directionStep = train.sectionLength > 0 ? 1 : train.sectionLength < 0 ? -1 : 0;
             }
 
             if (prevIndex === undefined && directionStep) {
@@ -1754,10 +1796,25 @@ export default class extends Evented {
                 }
             }
 
+            if (prevIndex === undefined && train && typeof train.sectionIndex === 'number') {
+                prevIndex = train.sectionIndex;
+                prevStation = railway.stations[prevIndex];
+            }
+
             if (prevIndex === undefined || prevIndex === nextIndex) {
+                preserveTrain(train, {
+                    destinationName: t.dest,
+                    timeToStation: next.timeToStation,
+                    currentLocation: t.currentLocation
+                });
                 continue;
             }
             if (prevIndex < 0 || nextIndex < 0 || prevIndex >= stationOffsets.length || nextIndex >= stationOffsets.length) {
+                preserveTrain(train, {
+                    destinationName: t.dest,
+                    timeToStation: next.timeToStation,
+                    currentLocation: t.currentLocation
+                });
                 continue;
             }
 
@@ -1816,7 +1873,6 @@ export default class extends Evented {
             progress = Math.max(0, Math.min(0.99, progress));
 
             // Keep the smoothing logic from the original implementation
-            let train = me._londonLiveTrafficTrains.get(t.key);
             if (train && train.sectionIndex === prevIndex && train.sectionLength === sectionLength &&
                 typeof train._londonProgress === 'number') {
                 let predictedProgress = train._londonProgress;
@@ -1824,20 +1880,21 @@ export default class extends Evented {
                     const elapsedSec = Math.max(0, (nowOffset - train._londonLastUpdate) / 1000);
                     predictedProgress = train._londonProgress + (elapsedSec / Math.max(train._londonDurationSec, 0.1));
                 }
-                // Only use predicted progress if it's greater than the API-derived progress
+                // Avoid snapping backwards; limit large forward jumps too
                 if (predictedProgress > progress) {
                     progress = Math.min(0.99, predictedProgress);
+                } else if (progress - predictedProgress > 0.2) {
+                    progress = Math.min(0.99, predictedProgress + 0.2);
                 }
             }
 
             const duration = durationSec * 1000;
-            const startTime = nowOffset - progress * duration;
+            const nowEpoch = me.clock.getTime();
+            const nextEpoch = isFinite(next.expectedArrival) ? next.expectedArrival : nowEpoch + next.timeToStation * 1000;
+            const prevEpoch = isFinite(nextEpoch) ? nextEpoch - duration : NaN;
             const accelTime = duration / 2;
             const accel = 4 / (duration * duration);
 
-            if (train) {
-                train._londonProgress = progress;
-            }
             if (!train) {
                 train = {
                     type: 'train',
@@ -1860,17 +1917,60 @@ export default class extends Evented {
             train.destinationName = t.dest;
             train.timeToStation = next.timeToStation;
             train.currentLocation = t.currentLocation;
+            train._tflPrevTime = isFinite(prevEpoch) ? prevEpoch : undefined;
+            train._tflNextTime = isFinite(nextEpoch) ? nextEpoch : undefined;
             train.d = sectionLength >= 0 ? railway.descending : railway.ascending;
 
             if (train.instanceID === undefined) {
                 me.trafficLayer.addObject(train);
             }
-            me.trafficLayer.updateObject(train, startTime, duration, accelTime, accel, accelTime, accel);
+            pendingUpdates.push({
+                train,
+                progress,
+                duration,
+                accelTime,
+                accel,
+                sectionKey: `${railway.id}|${prevIndex}|${nextIndex}`,
+                timeToStation: next.timeToStation
+            });
             seen.add(t.key);
+        }
+
+        // De-overlap trains on the same segment by spacing their progress slightly.
+        if (pendingUpdates.length > 1) {
+            const groups = new Map();
+            for (const update of pendingUpdates) {
+                const key = update.sectionKey;
+                const list = groups.get(key);
+                if (list) {
+                    list.push(update);
+                } else {
+                    groups.set(key, [update]);
+                }
+            }
+            for (const list of groups.values()) {
+                if (list.length < 2) continue;
+                list.sort((a, b) => a.timeToStation - b.timeToStation);
+                for (let i = 0; i < list.length; i++) {
+                    const adjusted = Math.max(0, Math.min(0.99, list[i].progress - i * LONDON_OVERLAP_PROGRESS_SPACING));
+                    list[i].progress = adjusted;
+                }
+            }
+        }
+
+        for (const update of pendingUpdates) {
+            const { train, progress, duration, accelTime, accel } = update;
+            const startTime = nowOffset - progress * duration;
+            train._londonProgress = progress;
+            me.trafficLayer.updateObject(train, startTime, duration, accelTime, accel, accelTime, accel);
         }
 
         for (const [key, train] of me._londonLiveTrafficTrains.entries()) {
             if (!seen.has(key)) {
+                const lastUpdate = train._londonLastUpdate;
+                if (typeof lastUpdate === 'number' && nowOffset - lastUpdate < 30000) {
+                    continue;
+                }
                 me.trafficLayer.removeObject(train);
                 me._londonLiveTrafficTrains.delete(key);
             }
@@ -2786,11 +2886,34 @@ export default class extends Evented {
             status = railway.status;
 
         if (train.liveTfL) {
-            const etaMin = typeof train.timeToStation === 'number' ? Math.round(train.timeToStation / 60) : null;
-            const dest = train.destinationName ? ` → ${train.destinationName}` : '';
-            const eta = etaMin !== null ? ` · ETA ${etaMin} min` : '';
-            const loc = train.currentLocation ? `<br>${train.currentLocation}` : '';
-            return `<strong>Train ${train.n || train.id}</strong>${dest}${eta}${loc}`;
+            const headerColor = (train.v || railway).color || '#0098D4';
+            const destinationLabel = train.destinationName
+                ? dict['for'].replace('$1', train.destinationName)
+                : me.getLocalizedRailDirectionTitle(train.d);
+            const trainNumber = train.n || train.id;
+            const prevStation = train.departureStation ? me.getLocalizedStationTitle(train.departureStation) : null;
+            const nextStation = train.arrivalStation ? me.getLocalizedStationTitle(train.arrivalStation) : null;
+            const prevTime = Number.isFinite(train._tflPrevTime) ? me.clock.getTimeString(train._tflPrevTime) : null;
+            const nextTime = Number.isFinite(train._tflNextTime) ? me.clock.getTimeString(train._tflNextTime) : null;
+            const previousStopLabel = dict['previous-stop'] || 'Previous stop';
+            const nextStopLabel = dict['next-stop'] || 'Next stop';
+
+            return [
+                '<div class="desc-header">',
+                Array.isArray(headerColor) ? [
+                    '<div>',
+                    ...headerColor.slice(0, 3).map(c => `<div class="line-strip" style="background-color: ${c};"></div>`),
+                    '</div>'
+                ].join('') : `<div style="background-color: ${headerColor};"></div>`,
+                '<div><strong>',
+                me.getLocalizedRailwayTitle(railway),
+                '</strong>',
+                `<br>${destinationLabel}`,
+                '</div></div>',
+                `<strong>${dict['train-number']}:</strong> ${trainNumber}`,
+                prevStation ? `<br><strong>${previousStopLabel}:</strong> ${prevStation}${prevTime ? ` ${prevTime}` : ''}` : '',
+                nextStation ? `<br><strong>${nextStopLabel}:</strong> ${nextStation}${nextTime ? ` ${nextTime}` : ''}` : ''
+            ].join('');
         }
 
         return [
