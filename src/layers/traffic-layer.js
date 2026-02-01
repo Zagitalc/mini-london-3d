@@ -53,6 +53,13 @@ export default class {
             aircraftMeshSet = me.aircraftMeshSet = new AircraftMeshSet(MAX_AIRCRAFTS, { zoom, cameraZ, modelScale }),
             busMeshSet = me.busMeshSet = new BusMeshSet(MAX_BUSES, { zoom, cameraZ, modelScale });
 
+        if (me.isLondon) {
+            // Keep trains visually anchored to the line at low zoom/pitch.
+            const lift = 0.12;
+            ugCarMeshSet.uniforms.carLift.value = lift;
+            ogCarMeshSet.uniforms.carLift.value = lift;
+        }
+
         scene.add(ugCarMeshSet.getMesh());
         scene.add(ogCarMeshSet.getMesh());
         scene.add(aircraftMeshSet.getMesh());
@@ -292,6 +299,27 @@ export default class {
             rendererContext = renderer.getContext(),
             pixelRatio = window.devicePixelRatio,
             scene = mode === 'underground' ? me.ugPickingScene : me.ogPickingScene;
+
+        if (me.isLondon) {
+            // CPU fallback picking for London because the direct matrix path
+            // doesn't work with camera.setViewOffset().
+            let nearest = null;
+            let minDist2 = 16 * 16;
+            for (const object of me.objects.values()) {
+                if (!object || object.type !== 'train') continue;
+                const pos = me.computeRenderer.getInstancePosition(object.instanceID);
+                if (!pos || !pos.coord) continue;
+                const p = me.project(pos.coord, pos.altitude);
+                const dx = p.x - point.x;
+                const dy = p.y - point.y;
+                const dist2 = dx * dx + dy * dy;
+                if (dist2 < minDist2) {
+                    minDist2 = dist2;
+                    nearest = object;
+                }
+            }
+            return nearest;
+        }
 
         camera.setViewOffset(
             rendererContext.drawingBufferWidth,

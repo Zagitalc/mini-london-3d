@@ -30,6 +30,10 @@ const configs = {
     // Default data root (Map overrides this at runtime for localhost/London)
     dataUrl: 'https://minitokyo3d.com/data',
 
+    // Rendering defaults
+    defaultEcoMode: 'normal',
+    defaultEcoFrameRate: 30,
+
     // Realtime backends used by the original Tokyo deployment.
     // (For London bootstrap, you can leave these as-is; CORS will block them on localhost.)
     tidUrl: 'https://mini-tokyo.appspot.com/tid',

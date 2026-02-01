@@ -4,7 +4,9 @@ export default class {
         this.uniforms = {
             zoom: {value: parameters.zoom},
             cameraZ: {value: parameters.cameraZ},
-            modelScale: {value: parameters.modelScale}
+            modelScale: {value: parameters.modelScale},
+            carLift: {value: 0.44},
+            busLift: {value: 0.3}
         };
     }
 

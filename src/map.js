@@ -984,11 +984,35 @@ export default class extends Evented {
                         source: 'london-rail',
                         filter: ['==', ['get', 'type'], 'station'],
                         paint: {
-                            'circle-radius': 6,
+                            'circle-radius': [
+                                'interpolate',
+                                ['exponential', 2],
+                                ['zoom'],
+                                11, 1.5,
+                                12.5, 3,
+                                15, 5,
+                                18, 7
+                            ],
                             'circle-color': '#ffffff',
-                            'circle-stroke-width': 2,
+                            'circle-stroke-width': [
+                                'interpolate',
+                                ['exponential', 2],
+                                ['zoom'],
+                                11, 0.5,
+                                12.5, 1,
+                                15, 1.5,
+                                18, 2
+                            ],
                             'circle-stroke-color': '#000000',
-                            'circle-opacity': 0.98
+                            'circle-opacity': [
+                                'interpolate',
+                                ['exponential', 2],
+                                ['zoom'],
+                                10.5, 0,
+                                11.5, 0.2,
+                                12.5, 0.6,
+                                13.5, 0.98
+                            ]
                         }
                     });
 
@@ -1664,7 +1688,13 @@ export default class extends Evented {
         const pendingUpdates = [];
         const preserveTrain = (train, patch = {}) => {
             if (!train) return false;
-            if (typeof train._londonProgress === 'number' &&
+            if (typeof train._londonStartOffset === 'number' && typeof train._londonEndOffset === 'number') {
+                const duration = train._londonEndOffset - train._londonStartOffset;
+                if (duration > 0) {
+                    const predicted = (nowOffset - train._londonStartOffset) / duration;
+                    train._londonProgress = Math.max(0, Math.min(0.99, predicted));
+                }
+            } else if (typeof train._londonProgress === 'number' &&
                 typeof train._londonDurationSec === 'number' &&
                 typeof train._londonLastUpdate === 'number') {
                 const elapsedSec = Math.max(0, (nowOffset - train._londonLastUpdate) / 1000);
@@ -1862,33 +1892,34 @@ export default class extends Evented {
                 continue; // Cannot proceed without a valid duration
             }
 
+            const duration = durationSec * 1000;
+            let nextOffset = nowOffset + next.timeToStation * 1000;
+            let startOffset = nextOffset - duration;
+
+            if (train && train.sectionIndex === prevIndex && train.sectionLength === sectionLength) {
+                const prevStart = train._londonStartOffset;
+                const prevEnd = train._londonEndOffset;
+                if (typeof prevStart === 'number' && typeof prevEnd === 'number') {
+                    const endDelta = nextOffset - prevEnd;
+                    if (Math.abs(endDelta) <= 15000) {
+                        startOffset = prevStart;
+                        nextOffset = prevEnd;
+                    } else {
+                        const blend = 0.3;
+                        nextOffset = prevEnd + endDelta * blend;
+                        startOffset = nextOffset - duration;
+                    }
+                }
+            }
+
             // This is the new time-based progress calculation
-            const safeTimeToStation = Math.max(0.1, next.timeToStation);
-            progress = 1 - (safeTimeToStation / durationSec);
+            progress = (nowOffset - startOffset) / duration;
 
             // Clamp progress to a valid range
             if (!isFinite(progress)) {
                 continue;
             }
             progress = Math.max(0, Math.min(0.99, progress));
-
-            // Keep the smoothing logic from the original implementation
-            if (train && train.sectionIndex === prevIndex && train.sectionLength === sectionLength &&
-                typeof train._londonProgress === 'number') {
-                let predictedProgress = train._londonProgress;
-                if (typeof train._londonDurationSec === 'number' && typeof train._londonLastUpdate === 'number') {
-                    const elapsedSec = Math.max(0, (nowOffset - train._londonLastUpdate) / 1000);
-                    predictedProgress = train._londonProgress + (elapsedSec / Math.max(train._londonDurationSec, 0.1));
-                }
-                // Avoid snapping backwards; limit large forward jumps too
-                if (predictedProgress > progress) {
-                    progress = Math.min(0.99, predictedProgress);
-                } else if (progress - predictedProgress > 0.2) {
-                    progress = Math.min(0.99, predictedProgress + 0.2);
-                }
-            }
-
-            const duration = durationSec * 1000;
             const nowEpoch = me.clock.getTime();
             const nextEpoch = isFinite(next.expectedArrival) ? next.expectedArrival : nowEpoch + next.timeToStation * 1000;
             const prevEpoch = isFinite(nextEpoch) ? nextEpoch - duration : NaN;
@@ -1909,6 +1940,8 @@ export default class extends Evented {
             train._londonProgress = progress;
             train._londonDurationSec = durationSec;
             train._londonLastUpdate = nowOffset;
+            train._londonStartOffset = startOffset;
+            train._londonEndOffset = nextOffset;
 
             train.sectionIndex = prevIndex;
             train.sectionLength = sectionLength;
@@ -1968,7 +2001,7 @@ export default class extends Evented {
         for (const [key, train] of me._londonLiveTrafficTrains.entries()) {
             if (!seen.has(key)) {
                 const lastUpdate = train._londonLastUpdate;
-                if (typeof lastUpdate === 'number' && nowOffset - lastUpdate < 30000) {
+                if (typeof lastUpdate === 'number' && nowOffset - lastUpdate < 60000) {
                     continue;
                 }
                 me.trafficLayer.removeObject(train);
@@ -4668,11 +4701,6 @@ function initContainer(container) {
     }, container);
 
     helpers.createElement('div', {
-        id: 'loader',
-        className: 'loader-inner ball-pulse',
-        innerHTML: '<div></div><div></div><div></div>'
-    }, container);
-    helpers.createElement('div', {
         id: 'loading-error'
     }, container);
     container.classList.add('mini-tokyo-3d');
@@ -4682,6 +4710,7 @@ function initContainer(container) {
 function showLoader(container) {
     const element = container.querySelector('#loader');
 
+    if (!element) return;
     element.style.opacity = 1;
     element.style.display = 'block';
 }
@@ -4689,6 +4718,7 @@ function showLoader(container) {
 function hideLoader(container) {
     const element = container.querySelector('#loader');
 
+    if (!element) return;
     element.style.opacity = 0;
     setTimeout(() => {
         element.style.display = 'none';
@@ -4699,7 +4729,7 @@ function showErrorMessage(container) {
     const loaderElement = container.querySelector('#loader'),
         errorElement = container.querySelector('#loading-error');
 
-    loaderElement.style.display = 'none';
+    if (loaderElement) loaderElement.style.display = 'none';
     errorElement.innerHTML = 'Loading failed. Please reload the page.';
     errorElement.style.display = 'block';
 }

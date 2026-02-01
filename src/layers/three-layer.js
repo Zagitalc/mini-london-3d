@@ -129,7 +129,7 @@ export default class {
 
     _render(gl, matrix) {
         // These parameters are copied from mapbox-gl/src/geo/transform.js
-        const { modelOrigin, mbox, renderer, camera, light, scene } = this,
+        const { mbox, renderer, camera, light, scene } = this,
             { _fov, _camera, _horizonShift, pixelsPerMeter, worldSize, _pitch, width, height } = mbox.transform,
             halfFov = _fov / 2,
             cameraToSeaLevelDistance = _camera.position[2] * worldSize / Math.cos(_pitch),
@@ -139,16 +139,26 @@ export default class {
             nearZ = camera.near = height / 50,
             halfHeight = Math.tan(halfFov) * nearZ,
             halfWidth = halfHeight * width / height,
-
+            modelOrigin = this.map.getModelOrigin() || this.modelOrigin,
             m = new Matrix4().fromArray(matrix),
             l = new Matrix4()
                 .makeTranslation(modelOrigin.x, modelOrigin.y, 0)
                 .scale(new Vector3(1, -1, 1));
 
-        camera.projectionMatrix.makePerspective(
-            -halfWidth, halfWidth, halfHeight, -halfHeight, nearZ, farZ
-        ).clone().invert().multiply(m).multiply(l).invert()
-            .decompose(camera.position, camera.quaternion, camera.scale);
+        this.modelOrigin = modelOrigin;
+
+        const useDirectMatrix = this.map.getCityFromLocation && this.map.getCityFromLocation() === 'london';
+        if (useDirectMatrix) {
+            camera.projectionMatrix.copy(m).multiply(l);
+            camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
+            camera.matrixWorld.identity();
+            camera.matrixWorldInverse.identity();
+        } else {
+            camera.projectionMatrix.makePerspective(
+                -halfWidth, halfWidth, halfHeight, -halfHeight, nearZ, farZ
+            ).clone().invert().multiply(m).multiply(l).invert()
+                .decompose(camera.position, camera.quaternion, camera.scale);
+        }
 
         const rad = MathUtils.degToRad(mbox.getBearing() + 30);
         light.position.set(-Math.sin(rad), -Math.cos(rad), SQRT3).normalize();
