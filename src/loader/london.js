@@ -14,6 +14,19 @@ const DEMO_END_MIN = 23 * 60;
 const DEMO_HEADWAY_MIN = 10;
 const DEMO_TRAVEL_MIN = 2;
 const DEMO_DWELL_MIN = 1;
+const TFL_LINE_COLORS = {
+    bakerloo: '#B36305',
+    central: '#E32017',
+    circle: '#FFD300',
+    district: '#00782A',
+    'hammersmith-city': '#F3A9BB',
+    jubilee: '#A0A5A9',
+    metropolitan: '#9B0056',
+    northern: '#000000',
+    piccadilly: '#003688',
+    victoria: '#0098D4',
+    'waterloo-city': '#95CDBA'
+};
 
 function toTimeString(totalMinutes) {
     const minutes = ((totalMinutes % 1440) + 1440) % 1440;
@@ -48,6 +61,66 @@ function buildGeometryLookup(data) {
     return new Map();
 }
 
+function getRailwaySlug(railway) {
+    if (!railway) return '';
+    if (railway.osmSlug) {
+        return String(railway.osmSlug).replace(/[^a-zA-Z0-9]+/g, '').toLowerCase();
+    }
+    const id = railway.geometryId || railway.lineId || railway.id || '';
+    const slug = String(id).replace(/^tfl\./, '');
+    return slug.replace(/[^a-zA-Z0-9]+/g, '').toLowerCase();
+}
+
+function getRailwayColor(railway) {
+    const lineId = String(railway.lineId || railway.id || '')
+        .replace(/^tfl\./, '')
+        .split('.')[0]
+        .toLowerCase();
+    const mapped = TFL_LINE_COLORS[lineId];
+    const color = String(railway.color || '').trim();
+
+    if (!mapped) {
+        return color || '#0098D4';
+    }
+    if (!color) {
+        return mapped;
+    }
+    if (color.toUpperCase() === '#0098D4' && lineId !== 'victoria') {
+        return mapped;
+    }
+    return color;
+}
+
+function extractLineCoordsFromGeoJSON(geojson) {
+    if (!geojson || !Array.isArray(geojson.features)) return null;
+    let bestCoords = null;
+    let bestLength = -1;
+
+    for (const feature of geojson.features) {
+        if (!feature || !feature.geometry) continue;
+        const { type, coordinates } = feature.geometry;
+        if (!coordinates) continue;
+
+        const candidates = [];
+        if (type === 'LineString') {
+            candidates.push(coordinates);
+        } else if (type === 'MultiLineString') {
+            for (const line of coordinates) {
+                candidates.push(line);
+            }
+        }
+        for (const lineCoords of candidates) {
+            if (!Array.isArray(lineCoords) || lineCoords.length < 2) continue;
+            const length = turfLength(lineString(lineCoords));
+            if (isFinite(length) && length > bestLength) {
+                bestLength = length;
+                bestCoords = lineCoords;
+            }
+        }
+    }
+    return bestCoords;
+}
+
 function reorderLineByStations(lineCoords, stationCoords) {
     if (!Array.isArray(lineCoords) || lineCoords.length < 2 || !Array.isArray(stationCoords) || stationCoords.length < 2) {
         return lineCoords;
@@ -59,7 +132,12 @@ function reorderLineByStations(lineCoords, stationCoords) {
     const stationOffsets = stationCoords.map(coord =>
         nearestPointOnLine(line, point(coord)).properties.location
     );
-    const startOffset = stationOffsets[0] ?? 0;
+    // nearestPointOnLine() can return `location === length` for points at the end node.
+    // For looped lines that causes lineSliceAlong(startOffset, length) to become a
+    // degenerate slice (start == stop) and Turf will throw. Normalize into [0, length).
+    let startOffset = stationOffsets[0] ?? 0;
+    if (!isFinite(startOffset)) startOffset = 0;
+    startOffset = ((startOffset % length) + length) % length;
 
     const unwrapped = stationOffsets.map(offset =>
         offset >= startOffset ? offset - startOffset : offset - startOffset + length
@@ -101,7 +179,8 @@ function buildFeatures(railways, stationLookup, geometryLookup) {
             stationCoords.push(station.coord);
         }
 
-        const geometryCoords = geometryLookup && geometryLookup.get(railway.id);
+        const geometryKey = railway.geometryId || railway.id;
+        const geometryCoords = geometryLookup && geometryLookup.get(geometryKey);
         const baseLineCoords = Array.isArray(geometryCoords) && geometryCoords.length >= 2
             ? geometryCoords
             : coords;
@@ -125,7 +204,7 @@ function buildFeatures(railways, stationLookup, geometryLookup) {
                 properties: {
                     id: `${railway.id}.${zoom}`,
                     type: 0,
-                    color: railway.color || '#0098d4',
+                    color: getRailwayColor(railway),
                     width: 8,
                     zoom,
                     altitude: 1,
@@ -216,6 +295,19 @@ export default async function () {
     ]);
     const geometryData = await loadJSON(`${DATA_DIR}/railway-geometries.json`).catch(() => null);
     const geometryLookup = buildGeometryLookup(geometryData);
+
+    // Fallback: load line geometries from per-line OSM GeoJSON exports if missing.
+    for (const railway of railways) {
+        const key = railway.geometryId || railway.id;
+        if (geometryLookup.has(key)) continue;
+        const slug = getRailwaySlug(railway);
+        if (!slug) continue;
+        const geojson = await loadJSON(`${DATA_DIR}/osm-${slug}.geojson`).catch(() => null);
+        const coords = extractLineCoordsFromGeoJSON(geojson);
+        if (Array.isArray(coords) && coords.length >= 2) {
+            geometryLookup.set(key, coords);
+        }
+    }
 
     const stationLookup = new Map(stations.map(st => [st.id, st]));
     const featureCollection = buildFeatures(railways, stationLookup, geometryLookup);

@@ -1042,7 +1042,7 @@ export default class extends Evented {
 
             // London live trains: Victoria line using TfL arrivals predictions.
             if (useLondonLiveTrains3d) {
-                me._pendingLondonLiveTrains3d = { lineId: 'victoria', pollMs: 10000 };
+                me._pendingLondonLiveTrains3d = { lineId: null, pollMs: 10000 };
             }
 
             me.initLondonHoverPopups();
@@ -1590,7 +1590,24 @@ export default class extends Evented {
     getLondonRailwayByLineId(lineId) {
         const me = this;
         if (!me.railways) return null;
-        return me.railways.get(`tfl.${lineId}`) || me.railways.get(lineId);
+        const list = me.getLondonRailwaysByLineId(lineId);
+        return list[0] || null;
+    }
+
+    getLondonRailwaysByLineId(lineId) {
+        const me = this;
+        if (!me.railways) return [];
+        const results = [];
+        const key = String(lineId || '').toLowerCase();
+        for (const railway of me.railways.getAll()) {
+            if (!railway) continue;
+            const id = String(railway.id || '').toLowerCase();
+            const lineKey = String(railway.lineId || '').toLowerCase();
+            if (id === key || id === `tfl.${key}` || lineKey === key) {
+                results.push(railway);
+            }
+        }
+        return results;
     }
 
     getLondonStationIndexLookup(railway) {
@@ -1611,14 +1628,22 @@ export default class extends Evented {
 
     updateLondonLiveTrafficTrains(arrivals, stationLookup, railway, stationNameKeys) {
         const me = this;
-        if (!railway || !me.trafficLayer || !me.trafficLayer.addObject) return;
+        const railways = Array.isArray(railway) ? railway.filter(Boolean) : (railway ? [railway] : []);
+        if (!railways.length || !me.trafficLayer || !me.trafficLayer.addObject) return;
 
-        const stationIndexLookup = me.getLondonStationIndexLookup(railway);
-        if (!stationIndexLookup) return;
-
-        const routeFeature = me.featureLookup && me.featureLookup.get(`${railway.id}.13`);
-        const stationOffsets = routeFeature && routeFeature.properties && routeFeature.properties['station-offsets'];
-        if (!Array.isArray(stationOffsets) || stationOffsets.length < 2) return;
+        const stationIndexLookups = new Map();
+        const stationOffsetsLookup = new Map();
+        for (const rw of railways) {
+            const lookup = me.getLondonStationIndexLookup(rw);
+            if (!lookup) continue;
+            stationIndexLookups.set(rw.id, lookup);
+            const routeFeature = me.featureLookup && me.featureLookup.get(`${rw.id}.13`);
+            const stationOffsets = routeFeature && routeFeature.properties && routeFeature.properties['station-offsets'];
+            if (Array.isArray(stationOffsets) && stationOffsets.length >= 2) {
+                stationOffsetsLookup.set(rw.id, stationOffsets);
+            }
+        }
+        if (!stationIndexLookups.size || !stationOffsetsLookup.size) return;
 
         if (!me._londonLiveTrafficTrains) {
             me._londonLiveTrafficTrains = new Map();
@@ -1708,27 +1733,49 @@ export default class extends Evented {
         };
         for (const t of byTrain.values()) {
             let train = me._londonLiveTrafficTrains.get(t.key);
-            const predictions = [];
-            for (const a of t.arrivals) {
-                const stationKey = a.naptanId ? String(a.naptanId).toUpperCase() : me.normalizeLondonStationKey(a.stationName);
-                const stationInfo = stationLookup.get(stationKey) || resolveStationInfo(a.stationName);
-                if (!stationInfo || !stationInfo.station) continue;
-                const index = stationIndexLookup.get(stationInfo.station.id);
-                if (index === undefined) continue;
-                predictions.push({
-                    station: stationInfo.station,
-                    stationIndex: index,
-                    timeToStation: a.timeToStation,
-                    stationName: a.stationName,
-                    expectedArrival: a.expectedArrival
-                });
+            const candidates = [];
+            for (const rw of railways) {
+                const stationIndexLookup = stationIndexLookups.get(rw.id);
+                const stationOffsets = stationOffsetsLookup.get(rw.id);
+                if (!stationIndexLookup || !stationOffsets) continue;
+                const predictions = [];
+                for (const a of t.arrivals) {
+                    const stationKey = a.naptanId ? String(a.naptanId).toUpperCase() : me.normalizeLondonStationKey(a.stationName);
+                    const stationInfo = stationLookup.get(stationKey) || resolveStationInfo(a.stationName);
+                    if (!stationInfo || !stationInfo.station) continue;
+                    const index = stationIndexLookup.get(stationInfo.station.id);
+                    if (index === undefined) continue;
+                    predictions.push({
+                        station: stationInfo.station,
+                        stationIndex: index,
+                        timeToStation: a.timeToStation,
+                        stationName: a.stationName,
+                        expectedArrival: a.expectedArrival
+                    });
+                }
+                if (predictions.length) {
+                    candidates.push({ railway: rw, stationIndexLookup, stationOffsets, predictions });
+                }
             }
-            if (!predictions.length) {
+
+            let active = null;
+            if (train && train._londonRailwayId) {
+                active = candidates.find(candidate => candidate.railway.id === train._londonRailwayId) || null;
+            }
+            if (!active && candidates.length) {
+                candidates.sort((a, b) => b.predictions.length - a.predictions.length);
+                active = candidates[0];
+            }
+            if (!active) {
                 preserveTrain(train, {
                     destinationName: t.dest,
                     currentLocation: t.currentLocation
                 });
                 continue;
+            }
+            const { railway, stationIndexLookup, stationOffsets, predictions } = active;
+            if (train) {
+                train._londonRailwayId = railway.id;
             }
 
             predictions.sort((a, b) => a.timeToStation - b.timeToStation);
@@ -2127,7 +2174,7 @@ export default class extends Evented {
      * Uses TfL `/Line/{lineId}/Arrivals` predictions to render moving dots.
      * Note: Not true GPS positions; we place the dot at the next predicted station.
      */
-    startLondonLiveTrains({ lineId = 'victoria', pollMs = 10000 } = {}) {
+    startLondonLiveTrains({ lineId = null, pollMs = 10000 } = {}) {
         const me = this;
 
         if (me._londonLiveTrainsTimer) {
@@ -2181,11 +2228,50 @@ export default class extends Evented {
             }
         }
 
+        const lineIds = (() => {
+            if (Array.isArray(lineId)) {
+                return lineId.filter(Boolean);
+            }
+            if (typeof lineId === 'string' && lineId.trim()) {
+                return [lineId.trim()];
+            }
+            if (!me.railways) return [];
+            const ids = new Set();
+            for (const rw of me.railways.getAll()) {
+                if (!rw) continue;
+                let id = rw.lineId || String(rw.id || '').replace(/^tfl\./, '');
+                if (id.includes('.')) {
+                    id = id.split('.')[0];
+                }
+                if (id) ids.add(id);
+            }
+            return Array.from(ids);
+        })();
+
         const tick = async () => {
             try {
-                const arrivals = await me.fetchTfLJson(`/Line/${encodeURIComponent(lineId)}/Arrivals`);
-                const railway = me.getLondonRailwayByLineId(lineId);
-                me.updateLondonLiveTrafficTrains(arrivals, stationLookup, railway, stationNameKeys);
+                if (!lineIds.length) return;
+                const byLine = new Map();
+                const failed = [];
+
+                await Promise.all(lineIds.map(async lid => {
+                    try {
+                        const arrivals = await me.fetchTfLJson(`/Line/${encodeURIComponent(lid)}/Arrivals`);
+                        byLine.set(lid, Array.isArray(arrivals) ? arrivals : []);
+                    } catch (e) {
+                        failed.push(`${lid}: ${e.message}`);
+                    }
+                }));
+
+                if (failed.length) {
+                    console.warn('[London live trains] failed lines:', failed.join(' | '));
+                }
+
+                for (const [lid, list] of byLine.entries()) {
+                    const railways = me.getLondonRailwaysByLineId(lid);
+                    if (!railways.length) continue;
+                    me.updateLondonLiveTrafficTrains(list, stationLookup, railways, stationNameKeys);
+                }
             } catch (e) {
                 // Common causes: missing/invalid app key, network/CORS, TfL rate limit
                 console.warn('[London live trains] poll failed:', e);
@@ -2195,21 +2281,34 @@ export default class extends Evented {
         // Prime immediately, then poll.
         tick();
         me._londonLiveTrainsTimer = setInterval(tick, pollMs);
-        console.log(`[London live trains] polling TfL line=${lineId} every ${pollMs}ms`);
+        console.log(`[London live trains] polling TfL lines=${lineIds.join(',') || 'none'} every ${pollMs}ms`);
     }
 
-    fetchTfLJson(path) {
+    async fetchTfLJson(path) {
         const me = this;
 
-        const base = 'https://api.tfl.gov.uk';
-        const url = new URL(base + path);
+        const envProxy = (typeof import.meta !== 'undefined' && import.meta.env)
+            ? (import.meta.env.VITE_TFL_PROXY_BASE || import.meta.env.VITE_TFL_PROXY || null)
+            : null;
+        const secretProxy = me.secrets && (me.secrets.tflProxyBase || me.secrets.tfl_proxy_base);
+        const useLocalhost = typeof location !== 'undefined' && location.hostname === 'localhost';
+        const url = new URL(`https://api.tfl.gov.uk${path}`);
 
         // Support either Vite env var or secrets injected into options
-        const envKey = (typeof import.meta !== 'undefined' && import.meta.env && (import.meta.env.VITE_TFL_APP_KEY || import.meta.env.VITE_TFL_KEY))
+        const envKey = (typeof import.meta !== 'undefined' && import.meta.env && (
+            import.meta.env.VITE_TFL_APP_KEY || import.meta.env.VITE_TFL_KEY
+        ))
             ? (import.meta.env.VITE_TFL_APP_KEY || import.meta.env.VITE_TFL_KEY)
             : null;
+        const envAppId = (typeof import.meta !== 'undefined' && import.meta.env && (
+            import.meta.env.VITE_TFL_APP_ID || import.meta.env.VITE_TFL_ID
+        ))
+            ? (import.meta.env.VITE_TFL_APP_ID || import.meta.env.VITE_TFL_ID)
+            : null;
         const secretKey = me.secrets && (me.secrets.tflAppKey || me.secrets.tfl_key || me.secrets.tflKey);
+        const secretAppId = me.secrets && (me.secrets.tflAppId || me.secrets.tfl_id || me.secrets.tflId);
         const appKey = envKey || secretKey;
+        const appId = envAppId || secretAppId;
 
         if (appKey) {
             url.searchParams.set('app_key', appKey);
@@ -2217,16 +2316,71 @@ export default class extends Evented {
             me._tflKeyWarned = true;
             console.warn('[London live trains] missing TfL app key (set MT3D_CONFIG.secrets.tflAppKey)');
         }
+        if (appId) {
+            url.searchParams.set('app_id', appId);
+        }
 
-        return fetch(url.toString()).then(async res => {
-            if (!res.ok) {
-                const text = await res.text().catch(() => '');
-                throw new Error(`TfL ${res.status} ${text}`);
+        const primary = url.toString();
+        const pathWithQuery = `${url.pathname}${url.search}`;
+        const proxyCandidates = [];
+
+        if (secretProxy) proxyCandidates.push(secretProxy);
+        if (envProxy && envProxy !== secretProxy) proxyCandidates.push(envProxy);
+        if (useLocalhost) {
+            proxyCandidates.push(
+                'https://api.tfl.gov.uk',
+                'https://api.allorigins.win/raw?url=',
+                'https://corsproxy.io/?'
+            );
+        } else {
+            proxyCandidates.push('https://api.tfl.gov.uk');
+        }
+
+        const requestUrls = [];
+        const seen = new Set();
+        const addCandidate = candidate => {
+            if (!candidate) return;
+            const base = String(candidate).trim();
+            if (!base) return;
+            let requestUrl;
+            if (/^https?:\/\/api\.tfl\.gov\.uk\/?$/i.test(base)) {
+                requestUrl = primary;
+            } else if (base.includes('{url}')) {
+                requestUrl = base.replace('{url}', encodeURIComponent(primary));
+            } else if (base.includes('api.tfl.gov.uk')) {
+                requestUrl = `${base.replace(/\/$/, '')}${pathWithQuery}`;
+            } else if (base.endsWith('?') || base.endsWith('=') || /[?&](url|target)=$/i.test(base)) {
+                requestUrl = `${base}${encodeURIComponent(primary)}`;
+            } else {
+                requestUrl = `${base.replace(/\/$/, '')}${pathWithQuery}`;
             }
-            return res.json();
-        });
-    }
+            if (!seen.has(requestUrl)) {
+                seen.add(requestUrl);
+                requestUrls.push(requestUrl);
+            }
+        };
 
+        proxyCandidates.forEach(addCandidate);
+        if (!requestUrls.length) {
+            requestUrls.push(primary);
+        }
+
+        let lastError = null;
+        for (const requestUrl of requestUrls) {
+            try {
+                const res = await fetch(requestUrl);
+                if (!res.ok) {
+                    const text = await res.text().catch(() => '');
+                    throw new Error(`TfL ${res.status} ${text}`);
+                }
+                return await res.json();
+            } catch (e) {
+                lastError = e;
+            }
+        }
+
+        throw lastError || new Error('TfL request failed');
+    }
 
     _jumpTo(options) {
         const me = this,
