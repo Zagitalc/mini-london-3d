@@ -11,6 +11,34 @@ const MAX_UG_CARS = 1000;
 const MAX_OG_CARS = 2500;
 const MAX_AIRCRAFTS = 200;
 const MAX_BUSES = 4000;
+const LONDON_MODEL_SCALE_PROFILE = [
+    [9, 0.08],
+    [10, 0.18],
+    [11, 0.40],
+    [12, 0.78],
+    [13, 1.15],
+    [14, 1.35],
+    [15, 1.10],
+    [16, 0.88],
+    [17, 0.72],
+    [18, 0.58],
+    [20, 0.40]
+];
+
+function getZoomProfileValue(zoom, profile) {
+    if (!profile.length) return 1;
+    if (zoom <= profile[0][0]) return profile[0][1];
+    for (let i = 1; i < profile.length; i++) {
+        const [currZoom, currValue] = profile[i];
+        const [prevZoom, prevValue] = profile[i - 1];
+
+        if (zoom <= currZoom) {
+            const ratio = (zoom - prevZoom) / (currZoom - prevZoom || 1);
+            return prevValue + (currValue - prevValue) * ratio;
+        }
+    }
+    return profile[profile.length - 1][1];
+}
 
 export default class {
 
@@ -43,7 +71,9 @@ export default class {
         // map.getModelScale() depends on modelOrigin; if absent use fallback computation
         me.baseModelScale = (typeof map.getModelScale === 'function' && map.getModelOrigin()) ? map.getModelScale() : modelOrigin.meterInMercatorCoordinateUnits();
         me.isLondon = map.getCityFromLocation && map.getCityFromLocation() === 'london';
-        me.getModelScaleForZoom = () => me.baseModelScale;
+        me.getModelScaleForZoom = me.isLondon ?
+            zoomLevel => me.baseModelScale * getZoomProfileValue(zoomLevel, LONDON_MODEL_SCALE_PROFILE) :
+            () => me.baseModelScale;
         const modelScale = me.getModelScaleForZoom(zoom);
 
         me.computeRenderer = new ComputeRenderer(MAX_UG_CARS + MAX_OG_CARS + MAX_AIRCRAFTS + MAX_BUSES, { modelOrigin, chunkSize });
