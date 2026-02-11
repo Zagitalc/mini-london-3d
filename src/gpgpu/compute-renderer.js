@@ -35,6 +35,7 @@ export default class {
             textureData0: {value: null},
             textureData1: {value: null}
         };
+        const fadeDuration = Number.isFinite(configs.fadeDuration) ? Math.max(1, Math.floor(configs.fadeDuration)) : 1000;
         const material = me.material = new ShaderMaterial({
             uniforms,
             vertexShader: computeVertexShader,
@@ -42,7 +43,7 @@ export default class {
             defines: {
                 chunkSize: `${chunkSize}u`,
                 loopCount: me.loopCount,
-                fadeDuration: configs.fadeDuration
+                fadeDuration
             },
             glslVersion: GLSL3
         });
@@ -93,6 +94,19 @@ export default class {
         renderer.shadowMap.autoUpdate = false; // Avoid re-computing shadows
         renderer.setRenderTarget(currentDataVariable);
         me.quad.render(renderer);
+        if (!me._loggedProgramDiagnostics) {
+            const materialProps = renderer.properties && renderer.properties.get(me.material);
+            const program = materialProps && materialProps.currentProgram;
+            if (program && program.diagnostics) {
+                const diag = program.diagnostics;
+                console.warn('[MT3D compute shader diagnostics]', {
+                    programLog: diag.programLog,
+                    vertexLog: diag.vertexShader && diag.vertexShader.log,
+                    fragmentLog: diag.fragmentShader && diag.fragmentShader.log
+                });
+                me._loggedProgramDiagnostics = true;
+            }
+        }
         renderer.xr.enabled = currentXrEnabled;
         renderer.shadowMap.autoUpdate = currentShadowAutoUpdate;
         renderer.setRenderTarget(currentRenderTarget);

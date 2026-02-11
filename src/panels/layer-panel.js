@@ -11,16 +11,27 @@ export default class extends Panel {
 
     addTo(map) {
         const me = this,
-            layers = me._options.layers;
+            layers = me._options.layers || [],
+            extraItems = me._options.extraItems || [];
 
-        super.addTo(map)
-            .setTitle(map.dict['layers'])
-            .setHTML(layers.map(layer => [
+        const rows = [
+            ...layers.map(layer => [
                 `<div id="${layer.getId()}-layer" class="layer-row">`,
                 '<div class="layer-icon"></div>',
                 `<div>${layer.getName(map.lang)}</div>`,
                 '</div>'
-            ].join('')).join(''));
+            ].join('')),
+            ...extraItems.map(item => [
+                `<div id="${item.id}-layer" class="layer-row">`,
+                '<div class="layer-icon"></div>',
+                `<div>${item.title}</div>`,
+                '</div>'
+            ].join(''))
+        ].join('');
+
+        super.addTo(map)
+            .setTitle(map.dict['layers'])
+            .setHTML(rows);
 
         for (const layer of layers) {
             const element = me._container.querySelector(`#${layer.getId()}-layer .layer-icon`),
@@ -38,6 +49,29 @@ export default class extends Panel {
                 } else {
                     classList.add('layer-icon-enabled');
                     layer.enable();
+                }
+            });
+        }
+
+        for (const item of extraItems) {
+            const element = me._container.querySelector(`#${item.id}-layer .layer-icon`);
+            if (!element) continue;
+
+            const classList = element.classList;
+            const isEnabled = typeof item.enabled === 'function' ? item.enabled() : item.enabled;
+
+            if (item.iconStyle) {
+                Object.assign(element.style, item.iconStyle);
+            }
+            if (isEnabled) {
+                classList.add('layer-icon-enabled');
+            }
+
+            element.addEventListener('click', () => {
+                const nextEnabled = !classList.contains('layer-icon-enabled');
+                classList.toggle('layer-icon-enabled', nextEnabled);
+                if (item.onToggle) {
+                    item.onToggle(nextEnabled, map);
                 }
             });
         }

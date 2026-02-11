@@ -3,8 +3,8 @@ import geobuf from 'geobuf';
 import GtfsRealtimeBindings from 'gtfs-realtime-bindings';
 import Pbf from 'pbf';
 import configs from './configs';
-import {isString, loadJSON, removePrefix} from './helpers/helpers';
-import {decode} from './helpers/helpers-gtfs';
+import { isString, loadJSON, removePrefix } from './helpers/helpers';
+import { decode } from './helpers/helpers-gtfs';
 
 const RAILWAYS_FOR_TRAINS = {
     odpt: [
@@ -89,7 +89,37 @@ function adjustTrainID(id, type, destination) {
  *     current time
  * @returns {Object} Loaded data
  */
-export function loadStaticData(dataUrl, lang, clockPromise) {
+export function loadStaticData(dataUrl, lang, clockPromise, city) {
+    if (city === 'london') {
+        return Promise.all([
+            loadJSON(`assets/dictionary-${lang}.json`),
+            loadJSON(`${dataUrl}/railways.json.gz`),
+            loadJSON(`${dataUrl}/stations.json.gz`),
+            loadJSON(`${dataUrl}/features.json.gz`),
+            loadJSON(`${dataUrl}/rail-directions.json.gz`),
+            loadJSON(`${dataUrl}/train-types.json.gz`),
+            loadJSON(`${dataUrl}/train-vehicles.json.gz`),
+            clockPromise.then(clock => Promise.all([
+                getTimetableFileName(clock),
+                ...getExtraTimetableFileNames(clock)
+            ].map(fileName => `${dataUrl}/${fileName}`).map(loadJSON))).then(data => [].concat(...data))
+        ]).then(([dict, railwayData, stationData, featureCollection, railDirectionData, trainTypeData, trainVehicleData, timetableData]) => ({
+            dict,
+            railwayData,
+            stationData,
+            featureCollection,
+            railDirectionData,
+            trainTypeData,
+            trainVehicleData,
+            operatorData: [],
+            airportData: [],
+            flightStatusData: [],
+            poiData: [],
+            timetableData
+        }));
+    }
+
+    // existing Tokyo code path stays unchanged:
     return Promise.all([
         loadJSON(`assets/dictionary-${lang}.json`),
         ...[
@@ -249,7 +279,7 @@ export function loadDynamicFlightData() {
 }
 
 export function loadBusData(source, clock, lang) {
-    const workerUrl = URL.createObjectURL(new Blob([`WORKER_STRING`], {type: 'text/javascript'})),
+    const workerUrl = URL.createObjectURL(new Blob([`WORKER_STRING`], { type: 'text/javascript' })),
         worker = new Worker(workerUrl),
         proxy = Comlink.wrap(worker),
         date = clock.getDate(),

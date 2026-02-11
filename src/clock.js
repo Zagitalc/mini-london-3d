@@ -105,7 +105,8 @@ export default class {
             offset = -me.getLocalTimezoneOffset() +
                 ((date.getHours() < 3 ? -1 : 0) + (hours < 3 ? 1 : 0)) * 86400000;
 
-        return date.setHours(hours, minutes, 0, 0) + offset + configs.minDelay;
+        const minDelay = Number.isFinite(configs.minDelay) ? configs.minDelay : 0;
+        return date.setHours(hours, minutes, 0, 0) + offset + minDelay;
     }
 
     /**

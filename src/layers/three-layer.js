@@ -1,5 +1,6 @@
-import {AmbientLight, Color, DirectionalLight, LinearSRGBColorSpace, MathUtils, Matrix4, Mesh, PerspectiveCamera, Scene, Vector3, WebGLRenderer} from 'three';
-import {valueOrDefault} from '../helpers/helpers';
+import { AmbientLight, Color, DirectionalLight, LinearSRGBColorSpace, MathUtils, Matrix4, Mesh, PerspectiveCamera, Scene, Vector3, WebGLRenderer } from 'three';
+import { valueOrDefault } from '../helpers/helpers';
+import { MercatorCoordinate } from 'mapbox-gl';
 
 const SQRT3 = Math.sqrt(3);
 
@@ -20,8 +21,11 @@ export default class {
             _mbox = map.map;
 
         me.map = map;
-        me.modelOrigin = map.getModelOrigin();
+        // Use existing model origin or fallback to map center so 3D layers compute
+        // positions consistently even if origin wasn't set earlier.
+        me.modelOrigin = map.getModelOrigin() || MercatorCoordinate.fromLngLat(map.getCenter());
 
+        const fallbackId = beforeId && _mbox.getLayer(beforeId) ? beforeId : (_mbox.getLayer('poi') ? 'poi' : null);
         _mbox.addLayer({
             id,
             type: 'custom',
@@ -56,13 +60,13 @@ export default class {
                 }
             },
             render: me._render.bind(me)
-        }, beforeId || 'poi');
+        }, fallbackId || undefined);
         _mbox.setLayerZoomRange(id, implementation.minzoom, implementation.maxzoom);
     }
 
     _onAdd(mbox, gl) {
         const me = this,
-            {_fov, width, height} = mbox.transform,
+            { _fov, width, height } = mbox.transform,
             renderer = me.renderer = new WebGLRenderer({
                 canvas: mbox.getCanvas(),
                 context: gl
@@ -74,6 +78,14 @@ export default class {
 
         renderer.outputColorSpace = LinearSRGBColorSpace;
         renderer.autoClear = false;
+        renderer.debug.checkShaderErrors = true;
+        renderer.debug.onShaderError = (glContext, program, vertexShader, fragmentShader) => {
+            const vLog = glContext.getShaderInfoLog(vertexShader);
+            const fLog = glContext.getShaderInfoLog(fragmentShader);
+            const pLog = glContext.getProgramInfoLog(program);
+            console.error('[MT3D shader error]', { vLog, fLog, pLog });
+        };
+        renderer.getContext().getExtension('EXT_color_buffer_float');
 
         scene.add(light);
         scene.add(ambientLight);
@@ -117,8 +129,8 @@ export default class {
 
     _render(gl, matrix) {
         // These parameters are copied from mapbox-gl/src/geo/transform.js
-        const {modelOrigin, mbox, renderer, camera, light, scene} = this,
-            {_fov, _camera, _horizonShift, pixelsPerMeter, worldSize, _pitch, width, height} = mbox.transform,
+        const { mbox, renderer, camera, light, scene } = this,
+            { _fov, _camera, _horizonShift, pixelsPerMeter, worldSize, _pitch, width, height } = mbox.transform,
             halfFov = _fov / 2,
             cameraToSeaLevelDistance = _camera.position[2] * worldSize / Math.cos(_pitch),
             horizonDistance = cameraToSeaLevelDistance / _horizonShift,
@@ -127,16 +139,26 @@ export default class {
             nearZ = camera.near = height / 50,
             halfHeight = Math.tan(halfFov) * nearZ,
             halfWidth = halfHeight * width / height,
-
+            modelOrigin = this.map.getModelOrigin() || this.modelOrigin,
             m = new Matrix4().fromArray(matrix),
             l = new Matrix4()
                 .makeTranslation(modelOrigin.x, modelOrigin.y, 0)
                 .scale(new Vector3(1, -1, 1));
 
-        camera.projectionMatrix.makePerspective(
-            -halfWidth, halfWidth, halfHeight, -halfHeight, nearZ, farZ
-        ).clone().invert().multiply(m).multiply(l).invert()
-            .decompose(camera.position, camera.quaternion, camera.scale);
+        this.modelOrigin = modelOrigin;
+
+        const useDirectMatrix = this.map.getCityFromLocation && this.map.getCityFromLocation() === 'london';
+        if (useDirectMatrix) {
+            camera.projectionMatrix.copy(m).multiply(l);
+            camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
+            camera.matrixWorld.identity();
+            camera.matrixWorldInverse.identity();
+        } else {
+            camera.projectionMatrix.makePerspective(
+                -halfWidth, halfWidth, halfHeight, -halfHeight, nearZ, farZ
+            ).clone().invert().multiply(m).multiply(l).invert()
+                .decompose(camera.position, camera.quaternion, camera.scale);
+        }
 
         const rad = MathUtils.degToRad(mbox.getBearing() + 30);
         light.position.set(-Math.sin(rad), -Math.cos(rad), SQRT3).normalize();

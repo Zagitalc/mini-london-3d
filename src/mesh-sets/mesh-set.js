@@ -4,7 +4,9 @@ export default class {
         this.uniforms = {
             zoom: {value: parameters.zoom},
             cameraZ: {value: parameters.cameraZ},
-            modelScale: {value: parameters.modelScale}
+            modelScale: {value: parameters.modelScale},
+            carLift: {value: 0.44},
+            busLift: {value: 0.3}
         };
     }
 
@@ -57,8 +59,15 @@ export default class {
     refreshCameraParams(params) {
         const uniforms = this.uniforms;
 
-        uniforms.zoom.value = params.zoom;
-        uniforms.cameraZ.value = params.cameraZ;
+        if (params.zoom !== undefined) {
+            uniforms.zoom.value = params.zoom;
+        }
+        if (params.cameraZ !== undefined) {
+            uniforms.cameraZ.value = params.cameraZ;
+        }
+        if (params.modelScale !== undefined) {
+            uniforms.modelScale.value = params.modelScale;
+        }
     }
 
     dispose() {

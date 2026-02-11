@@ -1,3 +1,42 @@
+const TFL_LINE_COLORS = {
+    bakerloo: '#B36305',
+    central: '#E32017',
+    circle: '#FFD300',
+    district: '#00782A',
+    'hammersmith-city': '#F3A9BB',
+    jubilee: '#A0A5A9',
+    metropolitan: '#9B0056',
+    northern: '#000000',
+    piccadilly: '#003688',
+    victoria: '#0098D4',
+    'waterloo-city': '#95CDBA'
+};
+
+function getTfLLineId(params) {
+    const lineId = params.lineId || String(params.id || '').replace(/^tfl\./, '').split('.')[0];
+    return String(lineId || '').toLowerCase();
+}
+
+function resolveRailwayColor(params) {
+    const lineId = getTfLLineId(params);
+    const mapped = TFL_LINE_COLORS[lineId];
+    const color = (params.color || '').trim();
+
+    if (!mapped) {
+        return color || '#0098D4';
+    }
+    if (!color) {
+        return mapped;
+    }
+
+    // Older generated London data can have Victoria blue for every line.
+    if (color.toUpperCase() === '#0098D4' && lineId !== 'victoria') {
+        return mapped;
+    }
+
+    return color;
+}
+
 export default class {
 
     /*
@@ -17,6 +56,14 @@ export default class {
          * @type {string}
          */
         me.id = params.id;
+
+        /**
+         * Base TfL line id (e.g. "central") for branched railways.
+         * @type {string}
+         */
+        if (params.lineId) {
+            me.lineId = params.lineId;
+        }
 
         /**
          * Multilingual railway title.
@@ -54,7 +101,7 @@ export default class {
          * Railway color.
          * @type {string}
          */
-        me.color = params.color;
+        me.color = resolveRailwayColor(params);
 
         /**
          * Railway car composition.

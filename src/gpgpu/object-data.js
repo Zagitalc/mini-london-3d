@@ -81,6 +81,7 @@ export default class {
             uintArray.set([performance.now(), 2], offset + 5);
             uintTexture.needsUpdate = true;
 
+            const fadeDuration = Number.isFinite(configs.fadeDuration) ? configs.fadeDuration : 1000;
             animation.start({
                 complete: () => {
                     uintArray.set([0, 0], offset + 6);
@@ -88,7 +89,7 @@ export default class {
                     me.start = Math.min(instanceID, me.start);
                     resolve();
                 },
-                duration: configs.fadeDuration
+                duration: fadeDuration
             });
         });
     }

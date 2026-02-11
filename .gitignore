@@ -6,3 +6,5 @@
 secrets
 .DS_Store
 .eslintcache
+public/config.local.js
+data-london/

@@ -1,4 +1,4 @@
-import {DecodeUTF8, Gunzip} from 'fflate';
+import { DecodeUTF8, Gunzip } from 'fflate';
 import configs from '../configs';
 
 let touchDevice = false;
@@ -7,7 +7,7 @@ if (typeof window !== 'undefined') {
     // Browser environment
     window.addEventListener('touchstart', () => {
         touchDevice = true;
-    }, {once: true});
+    }, { once: true });
 }
 
 export function isTouchDevice() {
@@ -15,6 +15,11 @@ export function isTouchDevice() {
 }
 
 export function loadJSON(url) {
+    // Prevent invalid or disabled URLs from being fetched
+    if (!url || url === 'null') {
+        return Promise.resolve(null);
+    }
+
     return fetch(url).then(response => {
         if (url.endsWith('.gz')) {
             let stringData = '';
@@ -26,7 +31,7 @@ export function loadJSON(url) {
                     utfDecode.push(data, final);
                 });
 
-            return reader.read().then(function pump({done, value}) {
+            return reader.read().then(function pump({ done, value }) {
                 if (done) {
                     inflate.push(new Uint8Array(0), true);
                     return JSON.parse(stringData);
@@ -39,6 +44,7 @@ export function loadJSON(url) {
         }
     });
 }
+
 
 export function lerp(x, y, a) {
     return x * (1 - a) + y * a;

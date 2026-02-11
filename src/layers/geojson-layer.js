@@ -20,9 +20,17 @@ export default class {
         delete options.maxzoom;
         delete options.metadata;
 
-        mbox.addLayer(new MapboxLayer(options), beforeId || 'poi');
+        const fallbackId = beforeId && mbox.getLayer(beforeId) ? beforeId : (mbox.getLayer('poi') ? 'poi' : null);
+        if (fallbackId) {
+            mbox.addLayer(new MapboxLayer(options), fallbackId);
+        } else {
+            mbox.addLayer(new MapboxLayer(options));
+        }
         mbox.setLayerZoomRange(id, implementation.minzoom, implementation.maxzoom);
-        mbox.style.getOwnLayer(id).metadata = implementation.metadata;
+        const layer = mbox.style && mbox.style.getOwnLayer(id);
+        if (layer) {
+            layer.metadata = implementation.metadata;
+        }
     }
 
 }

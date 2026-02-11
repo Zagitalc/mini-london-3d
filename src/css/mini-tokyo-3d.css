@@ -1012,6 +1012,23 @@
     margin-right: 8px;
     display: inline-block;
 }
+.mini-tokyo-3d .london-station-popup {
+    min-width: 180px;
+}
+.mini-tokyo-3d .london-station-popup-title {
+    margin-bottom: 6px;
+}
+.mini-tokyo-3d .london-station-popup-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 2px 0;
+}
+.mini-tokyo-3d .london-station-popup-line .line-strip {
+    width: 10px;
+    height: 16px;
+    flex: 0 0 auto;
+}
 .mini-tokyo-3d .modal-panel-background {
     width: 100%;
     height: 100%;
