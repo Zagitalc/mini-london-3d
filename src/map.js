@@ -1,7 +1,5 @@
 import turfBuffer from '@turf/buffer';
 import turfDistance from '@turf/distance';
-import turfLength from '@turf/length';
-import lineSliceAlong from '@turf/line-slice-along';
 import { lineString } from '@turf/helpers';
 import { featureEach } from '@turf/meta';
 import { Evented, FullscreenControl, LngLat, LngLatBounds, Map as Mapbox, MercatorCoordinate, NavigationControl } from 'mapbox-gl';
@@ -26,7 +24,7 @@ import {
     selectLondonStationCandidate,
     shouldSkipLondonRouteEntry
 } from './helpers/london-live-trains.mjs';
-import { getLondonStationAnchor } from './helpers/london-geometry.mjs';
+import { getLondonStationAnchor, smoothLondonStationLine } from './helpers/london-geometry.mjs';
 import { applyLondonStationGroups } from './helpers/london-stations.mjs';
 import { GeoJsonLayer, ThreeLayer, Tile3DLayer, TrafficLayer } from './layers';
 import { loadBusData, loadDynamicBusData, loadDynamicFlightData, loadDynamicTrainData, loadStaticData, loadTimetableData, updateOdptUrl } from './loader';
@@ -56,6 +54,7 @@ const LONDON_3D_RAIL_LINE_WIDTH_SCALE_PROFILE = [
     [18, 0.58],
     [19, 0.48]
 ];
+const LONDON_VISUAL_LINE_SMOOTH_SUBDIVISIONS = 4;
 
 const DEGREE_TO_RADIAN = Math.PI / 180;
 
@@ -1816,18 +1815,37 @@ export default class extends Evented {
             return coords;
         };
 
+        const getGroupedRailwayAnchors = railway => {
+            const groups = [];
+
+            for (const station of railway.stations || []) {
+                if (!station) continue;
+                const group = groupBase(station.group || station.id);
+                if (!group) continue;
+                if (groups[groups.length - 1] === group) continue;
+                groups.push(group);
+            }
+
+            if (groups.length < 2) return null;
+
+            const anchors = groups.map(group => {
+                const entry = stationGroupLookup.get(group);
+                return entry && Array.isArray(entry.anchor) ? entry.anchor : null;
+            });
+
+            if (anchors.some(anchor => !Array.isArray(anchor))) {
+                return null;
+            }
+
+            return { groups, anchors };
+        };
+
         const railwayLineCoordsLookup = new Map();
-        const railwayOffsetsLookup = new Map();
         for (const rw of me.railways.getAll()) {
             if (!rw) continue;
             const coords = getRailwayLineCoords(rw);
             if (Array.isArray(coords) && coords.length >= 2) {
                 railwayLineCoordsLookup.set(rw.id, coords);
-            }
-            const routeFeature = me.featureLookup && me.featureLookup.get(`${rw.id}.13`);
-            const stationOffsets = routeFeature && routeFeature.properties && routeFeature.properties['station-offsets'];
-            if (Array.isArray(stationOffsets) && stationOffsets.length >= 2) {
-                railwayOffsetsLookup.set(rw.id, stationOffsets);
             }
         }
 
@@ -1907,6 +1925,7 @@ export default class extends Evented {
             if (!entry.stations.length) continue;
             const lines = Array.from(entry.lineLookup.values()).sort((a, b) => a.title.localeCompare(b.title));
             const center = getLondonStationAnchor(entry.stations);
+            entry.anchor = center;
             const first = entry.stations[0];
             const title = stationTitle(first);
             const interchange = lines.length >= 2;
@@ -1948,78 +1967,136 @@ export default class extends Evented {
             });
         }
 
-        const segmentFeatures = [];
-        const segmentFeatureLookup = new Set();
-        for (const rw of me.railways.getAll()) {
-            if (!rw || !Array.isArray(rw.stations) || rw.stations.length < 2) continue;
+        const getLineEdgeDistance = edge => {
+            if (!Number.isFinite(edge.distance)) {
+                edge.distance = turfDistance(edge.fromCoord, edge.toCoord);
+            }
+            return edge.distance;
+        };
+        const buildLineAdjacency = edgeMap => {
+            const adjacency = new Map();
 
-            const coords = railwayLineCoordsLookup.get(rw.id);
-            if (!coords || coords.length < 2) continue;
+            for (const edge of edgeMap.values()) {
+                const distance = getLineEdgeDistance(edge);
 
-            const offsets = railwayOffsetsLookup.get(rw.id);
-            const stationCount = rw.stations.length;
-            let segmented = false;
+                if (!adjacency.has(edge.fromGroup)) adjacency.set(edge.fromGroup, []);
+                if (!adjacency.has(edge.toGroup)) adjacency.set(edge.toGroup, []);
 
-            if (offsets && offsets.length >= 2) {
-                const size = Math.min(offsets.length, stationCount);
-                const routeFeature = lineString(coords);
-                const maxLength = turfLength(routeFeature);
+                adjacency.get(edge.fromGroup).push({
+                    node: edge.toGroup,
+                    segmentKey: edge.segmentKey,
+                    distance
+                });
+                adjacency.get(edge.toGroup).push({
+                    node: edge.fromGroup,
+                    segmentKey: edge.segmentKey,
+                    distance
+                });
+            }
 
-                for (let i = 0; i < size - 1; i++) {
-                    const rawStart = offsets[i];
-                    const rawEnd = offsets[i + 1];
-                    if (!isFinite(rawStart) || !isFinite(rawEnd)) continue;
-                    const start = Math.max(0, Math.min(maxLength, rawStart));
-                    const end = Math.max(0, Math.min(maxLength, rawEnd));
-                    if (Math.abs(end - start) < 1e-6) continue;
-                    const sliced = lineSliceAlong(routeFeature, Math.min(start, end), Math.max(start, end));
-                    const segmentCoords = sliced && sliced.geometry && sliced.geometry.coordinates;
-                    if (!Array.isArray(segmentCoords) || segmentCoords.length < 2) continue;
+            return adjacency;
+        };
+        const getAlternativeLineDistance = (adjacency, fromGroup, toGroup, skippedSegmentKey) => {
+            const distances = new Map([[fromGroup, 0]]);
+            const queue = [{ node: fromGroup, distance: 0 }];
 
-                    const fromGroup = groupBase((rw.stations[i] && rw.stations[i].group) || rw.stations[i].id);
-                    const toGroup = groupBase((rw.stations[i + 1] && rw.stations[i + 1].group) || rw.stations[i + 1].id);
-                    const segmentKey = [fromGroup, toGroup].sort().join('|');
-                    const lineKey = String(rw.lineId || rw.id || '').toLowerCase();
-                    const dedupeKey = `${segmentKey}|${lineKey}`;
-                    const direction = fromGroup <= toGroup ? 1 : -1;
+            while (queue.length) {
+                queue.sort((a, b) => a.distance - b.distance);
+                const current = queue.shift();
 
-                    if (segmentFeatureLookup.has(dedupeKey)) continue;
-                    segmentFeatureLookup.add(dedupeKey);
+                if (!current || current.distance !== distances.get(current.node)) continue;
+                if (current.node === toGroup) return current.distance;
 
-                    segmentFeatures.push({
-                        type: 'Feature',
-                        geometry: {
-                            type: 'LineString',
-                            coordinates: segmentCoords
-                        },
-                        properties: {
-                            type: 'railway',
-                            id: `${rw.id}.seg.${i}`,
-                            railwayId: rw.id,
-                            lineId: lineKey,
-                            color: rw.color || '#00a3e0',
-                            segmentKey,
-                            segmentDirection: direction,
-                            lineOffset: 0
-                        }
+                for (const edge of adjacency.get(current.node) || []) {
+                    if (edge.segmentKey === skippedSegmentKey) continue;
+                    const nextDistance = current.distance + edge.distance;
+                    if (nextDistance >= (distances.get(edge.node) ?? Infinity)) continue;
+                    distances.set(edge.node, nextDistance);
+                    queue.push({
+                        node: edge.node,
+                        distance: nextDistance
                     });
-                    segmented = true;
                 }
             }
 
-            if (!segmented) {
+            return Infinity;
+        };
+        const lineEdgeLookup = new Map();
+        for (const rw of me.railways.getAll()) {
+            if (!rw || !Array.isArray(rw.stations) || rw.stations.length < 2) continue;
+
+            const grouped = getGroupedRailwayAnchors(rw);
+            if (!grouped) continue;
+
+            const { groups, anchors } = grouped;
+            const smoothedAnchors = smoothLondonStationLine(anchors, LONDON_VISUAL_LINE_SMOOTH_SUBDIVISIONS);
+            const lineKey = String(rw.lineId || rw.id || '').toLowerCase();
+            const edgeMap = lineEdgeLookup.get(lineKey) || new Map();
+            if (!lineEdgeLookup.has(lineKey)) {
+                lineEdgeLookup.set(lineKey, edgeMap);
+            }
+
+            for (let i = 0; i < groups.length - 1; i++) {
+                const fromGroup = groups[i];
+                const toGroup = groups[i + 1];
+                const segmentKey = [fromGroup, toGroup].sort().join('|');
+                const startIndex = i * LONDON_VISUAL_LINE_SMOOTH_SUBDIVISIONS;
+                const endIndex = (i + 1) * LONDON_VISUAL_LINE_SMOOTH_SUBDIVISIONS;
+                const segmentCoords = smoothedAnchors.slice(startIndex, endIndex + 1);
+
+                if (!Array.isArray(segmentCoords) || segmentCoords.length < 2) continue;
+                if (edgeMap.has(segmentKey)) continue;
+
+                edgeMap.set(segmentKey, {
+                    id: `${rw.id}.seg.${i}`,
+                    railwayId: rw.id,
+                    lineId: lineKey,
+                    color: rw.color || '#00a3e0',
+                    segmentKey,
+                    segmentDirection: fromGroup <= toGroup ? 1 : -1,
+                    fromGroup,
+                    toGroup,
+                    fromCoord: anchors[i],
+                    toCoord: anchors[i + 1],
+                    coordinates: segmentCoords,
+                    lineOffset: 0,
+                    distance: turfDistance(anchors[i], anchors[i + 1])
+                });
+            }
+        }
+
+        const segmentFeatures = [];
+        for (const edgeMap of lineEdgeLookup.values()) {
+            const adjacency = buildLineAdjacency(edgeMap);
+
+            for (const edge of edgeMap.values()) {
+                const alternativeDistance = getAlternativeLineDistance(
+                    adjacency,
+                    edge.fromGroup,
+                    edge.toGroup,
+                    edge.segmentKey
+                );
+
+                if (Number.isFinite(alternativeDistance) &&
+                    alternativeDistance <= getLineEdgeDistance(edge) * 1.35) {
+                    continue;
+                }
+
                 segmentFeatures.push({
                     type: 'Feature',
                     geometry: {
                         type: 'LineString',
-                        coordinates: coords
+                        coordinates: edge.coordinates
                     },
                     properties: {
                         type: 'railway',
-                        id: rw.id,
-                        railwayId: rw.id,
-                        color: rw.color || '#00a3e0',
-                        lineOffset: 0
+                        id: edge.id,
+                        railwayId: edge.railwayId,
+                        lineId: edge.lineId,
+                        color: edge.color,
+                        segmentKey: edge.segmentKey,
+                        segmentDirection: edge.segmentDirection,
+                        lineOffset: edge.lineOffset
                     }
                 });
             }
@@ -3659,6 +3736,11 @@ export default class extends Evented {
         return title[me.lang] || title.en;
     }
 
+    getDisplayRailwayTitle(railway) {
+        const me = this;
+        return (me.getLocalizedRailwayTitle(railway) || '').replace(/\s+\((inbound|outbound)\)\s*$/i, '');
+    }
+
     getLocalizedTrainNameOrRailwayTitle(names, railway) {
         const me = this;
 
@@ -3764,7 +3846,7 @@ export default class extends Evented {
                     '</div>'
                 ].join('') : `<div style="background-color: ${headerColor};"></div>`,
                 '<div><strong>',
-                me.getLocalizedRailwayTitle(railway),
+                me.getDisplayRailwayTitle(railway),
                 '</strong>',
                 `<br>${destinationLabel}`,
                 '</div></div>',
