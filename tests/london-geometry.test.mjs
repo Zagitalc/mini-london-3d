@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
     getLondonStationAnchor,
     getOrderedLondonStationOffsets,
+    smoothLondonStationLine,
     shouldUseStationOrderGeometry
 } from '../src/helpers/london-geometry.mjs';
 
@@ -47,4 +48,18 @@ test('getLondonStationAnchor chooses a real station coordinate instead of averag
     ]);
 
     assert.deepEqual(anchor, [-0.101, 51.5002]);
+});
+
+test('smoothLondonStationLine keeps endpoints and adds intermediate points', () => {
+    const coords = [
+        [-0.1, 51.5],
+        [-0.11, 51.51],
+        [-0.12, 51.5]
+    ];
+    const smoothed = smoothLondonStationLine(coords);
+
+    assert.deepEqual(smoothed[0], coords[0]);
+    assert.ok(Math.abs(smoothed[smoothed.length - 1][0] - coords[coords.length - 1][0]) < 1e-9);
+    assert.ok(Math.abs(smoothed[smoothed.length - 1][1] - coords[coords.length - 1][1]) < 1e-9);
+    assert.ok(smoothed.length > coords.length);
 });

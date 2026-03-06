@@ -1948,6 +1948,7 @@ export default class extends Evented {
         }
 
         const segmentFeatures = [];
+        const segmentFeatureLookup = new Set();
         for (const rw of me.railways.getAll()) {
             if (!rw || !Array.isArray(rw.stations) || rw.stations.length < 2) continue;
 
@@ -1977,7 +1978,12 @@ export default class extends Evented {
                     const fromGroup = groupBase((rw.stations[i] && rw.stations[i].group) || rw.stations[i].id);
                     const toGroup = groupBase((rw.stations[i + 1] && rw.stations[i + 1].group) || rw.stations[i + 1].id);
                     const segmentKey = [fromGroup, toGroup].sort().join('|');
+                    const lineKey = String(rw.lineId || rw.id || '').toLowerCase();
+                    const dedupeKey = `${segmentKey}|${lineKey}`;
                     const direction = fromGroup <= toGroup ? 1 : -1;
+
+                    if (segmentFeatureLookup.has(dedupeKey)) continue;
+                    segmentFeatureLookup.add(dedupeKey);
 
                     segmentFeatures.push({
                         type: 'Feature',
@@ -1989,6 +1995,7 @@ export default class extends Evented {
                             type: 'railway',
                             id: `${rw.id}.seg.${i}`,
                             railwayId: rw.id,
+                            lineId: lineKey,
                             color: rw.color || '#00a3e0',
                             segmentKey,
                             segmentDirection: direction,
