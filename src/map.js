@@ -17,6 +17,15 @@ import * as helpers from './helpers/helpers';
 import { pickObject } from './helpers/helpers-deck';
 import * as helpersGeojson from './helpers/helpers-geojson';
 import * as helpersMapbox from './helpers/helpers-mapbox';
+import {
+    findFollowingLondonPrediction,
+    inferLondonDirectionStep,
+    LONDON_ROUTE_ENTRY_TTS_THRESHOLD,
+    scoreLondonRouteCandidate,
+    selectLondonNextPrediction,
+    selectLondonStationCandidate,
+    shouldSkipLondonRouteEntry
+} from './helpers/london-live-trains.mjs';
 import { GeoJsonLayer, ThreeLayer, Tile3DLayer, TrafficLayer } from './layers';
 import { loadBusData, loadDynamicBusData, loadDynamicFlightData, loadDynamicTrainData, loadStaticData, loadTimetableData, updateOdptUrl } from './loader';
 import { AboutPanel, BusPanel, LayerPanel, SharePanel, StationPanel, TrainPanel } from './panels';
@@ -31,7 +40,6 @@ const RAILWAY_NAMBOKU = 'TokyoMetro.Namboku',
 const AIRLINES_FOR_ANA_CODE_SHARE = ['ADO', 'SFJ', 'SNJ'];
 const LONDON_DEFAULT_SEGMENT_SPEED_KM_PER_SEC = 0.012;
 const LONDON_OVERLAP_PROGRESS_SPACING = 0.02;
-const LONDON_ROUTE_ENTRY_TTS_THRESHOLD = 240;
 const LONDON_3D_RAIL_LINE_WIDTH_SCALE_PROFILE = [
     [9, 0.12],
     [10, 0.24],
@@ -2108,16 +2116,7 @@ export default class extends Evented {
 
     resolveLondonStationInfo(name, stationLookup, stationNameKeys, stationIndexLookup) {
         const candidates = this.getLondonStationInfoCandidates(name, stationLookup, stationNameKeys);
-
-        if (!candidates.length) return null;
-        if (!stationIndexLookup) return candidates[0];
-
-        for (const candidate of candidates) {
-            if (candidate && candidate.station && stationIndexLookup.has(candidate.station.id)) {
-                return candidate;
-            }
-        }
-        return candidates[0];
+        return selectLondonStationCandidate(candidates, stationIndexLookup);
     }
 
     getLondonRailwayByLineId(lineId) {
@@ -2214,29 +2213,6 @@ export default class extends Evented {
         };
         const resolveStationInfo = (value, stationIndexLookup) =>
             me.resolveLondonStationInfo(value, stationLookup, stationNameKeys, stationIndexLookup);
-        const inferDirectionStep = (predictions, prevIndex, nextIndexHint, train) => {
-            let score = 0;
-
-            if (prevIndex !== undefined && nextIndexHint !== undefined && nextIndexHint !== prevIndex) {
-                return nextIndexHint > prevIndex ? 1 : -1;
-            }
-            for (let i = 1; i < predictions.length; i++) {
-                const diff = predictions[i].stationIndex - predictions[i - 1].stationIndex;
-
-                if (diff > 0) {
-                    score += 1 / diff;
-                } else if (diff < 0) {
-                    score -= 1 / -diff;
-                }
-            }
-            if (score) {
-                return score > 0 ? 1 : -1;
-            }
-            if (train && typeof train.sectionLength === 'number' && train.sectionLength !== 0) {
-                return train.sectionLength > 0 ? 1 : -1;
-            }
-            return 0;
-        };
 
         for (const a of arr) {
             if (!a) continue;
@@ -2378,30 +2354,12 @@ export default class extends Evented {
                     const currentIndexHint = currentStation ? stationIndexLookup.get(currentStation.id) : undefined;
                     const prevIndexHint = prevHintStation ? stationIndexLookup.get(prevHintStation.id) : undefined;
                     const nextIndexHint = nextHintStation ? stationIndexLookup.get(nextHintStation.id) : undefined;
-
-                    if (currentIndexHint !== undefined) {
-                        score += 200;
-                    }
-                    if (prevIndexHint !== undefined) {
-                        score += 120;
-                    }
-                    if (nextIndexHint !== undefined) {
-                        score += 120;
-                    }
-                    if (predictions.length) {
-                        const firstPrediction = predictions[0];
-
-                        if (currentIndexHint !== undefined) {
-                            score += Math.max(0, 80 - Math.abs(firstPrediction.stationIndex - currentIndexHint) * 20);
-                        }
-                        if (prevIndexHint !== undefined) {
-                            score += Math.max(0, 60 - Math.abs(firstPrediction.stationIndex - prevIndexHint - 1) * 20);
-                            score += Math.max(0, 60 - Math.abs(firstPrediction.stationIndex - prevIndexHint + 1) * 20);
-                        }
-                        if (nextIndexHint !== undefined) {
-                            score += Math.max(0, 80 - Math.abs(firstPrediction.stationIndex - nextIndexHint) * 20);
-                        }
-                    }
+                    score = scoreLondonRouteCandidate({
+                        predictions,
+                        currentIndexHint,
+                        prevIndexHint,
+                        nextIndexHint
+                    });
                     candidates.push({
                         railway: rw,
                         stationIndexLookup,
@@ -2483,46 +2441,22 @@ export default class extends Evented {
             }
 
             const nextIndexHint = nextStation ? stationIndexLookup.get(nextStation.id) : undefined;
-            let directionStep = inferDirectionStep(predictions, prevIndex, nextIndexHint, train);
-            let next = null;
-            if (nextIndexHint !== undefined) {
-                next = predictionsByIndex.get(nextIndexHint) || null;
-                if (!next && nextStation && prevIndex !== undefined && Math.abs(nextIndexHint - prevIndex) === 1) {
-                    const firstPrediction = predictions[0];
-                    let estimatedTimeToStation = 30;
-
-                    if (firstPrediction && isFinite(firstPrediction.timeToStation)) {
-                        estimatedTimeToStation = Math.max(
-                            15,
-                            Math.min(firstPrediction.timeToStation * 0.5, firstPrediction.timeToStation - 15)
-                        );
-                    }
-                    if (between) {
-                        estimatedTimeToStation = Math.max(20, Math.min(60, estimatedTimeToStation));
-                    } else if (locationLower.startsWith('approaching ')) {
-                        estimatedTimeToStation = Math.max(10, Math.min(30, estimatedTimeToStation));
-                    }
-                    next = {
-                        station: nextStation,
-                        stationIndex: nextIndexHint,
-                        timeToStation: estimatedTimeToStation,
-                        stationName: nextStation.title.en,
-                        expectedArrival: NaN
-                    };
-                }
-            }
-            if (!directionStep) {
-                directionStep = 1;
-            }
-            if (!next && prevIndex !== undefined) {
-                const adjacentIndex = prevIndex + directionStep;
-                next = predictionsByIndex.get(adjacentIndex) || predictions.find(p =>
-                    directionStep > 0 ? p.stationIndex > prevIndex : p.stationIndex < prevIndex
-                ) || null;
-            }
-            if (!next) {
-                next = predictions[0];
-            }
+            let directionStep = inferLondonDirectionStep(
+                predictions,
+                prevIndex,
+                nextIndexHint,
+                train && train.sectionLength
+            ) || 1;
+            const next = selectLondonNextPrediction({
+                predictions,
+                predictionsByIndex,
+                prevIndex,
+                nextIndexHint,
+                nextStation,
+                directionStep,
+                locationLower,
+                between: !!between
+            });
             if (!next) {
                 preserveTrain(train, {
                     destinationName: t.dest,
@@ -2537,7 +2471,11 @@ export default class extends Evented {
             // geometry we actually render for that line. Skip those until they are close
             // enough to the first modeled stop, otherwise they appear to jump onto the
             // wrong segment and pass through other trains.
-            if (!hasLocationHint && next.timeToStation > LONDON_ROUTE_ENTRY_TTS_THRESHOLD) {
+            if (shouldSkipLondonRouteEntry({
+                hasLocationHint,
+                nextTimeToStation: next.timeToStation,
+                threshold: LONDON_ROUTE_ENTRY_TTS_THRESHOLD
+            })) {
                 preserveTrain(train, {
                     destinationName: t.dest,
                     timeToStation: next.timeToStation,
@@ -2546,15 +2484,12 @@ export default class extends Evented {
                 continue;
             }
 
-            let following = null;
-            for (const p of predictions) {
-                if (p.stationIndex !== nextIndex &&
-                    p.timeToStation >= next.timeToStation &&
-                    (directionStep > 0 ? p.stationIndex > nextIndex : p.stationIndex < nextIndex)) {
-                    following = p;
-                    break;
-                }
-            }
+            const following = findFollowingLondonPrediction({
+                predictions,
+                nextIndex,
+                directionStep,
+                nextTimeToStation: next.timeToStation
+            });
 
             if (prevIndex === undefined && directionStep) {
                 prevIndex = nextIndex - directionStep;
@@ -4022,6 +3957,11 @@ export default class extends Evented {
 
     refreshTrainTimetableData() {
         const me = this;
+
+        if (me.getCityFromLocation() === 'london') {
+            me.timetables.clear();
+            return;
+        }
 
         showLoader(me.container);
         me.timetables.clear();

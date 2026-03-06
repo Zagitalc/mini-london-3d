@@ -76,6 +76,7 @@
     "serve": "npx serve build",
     "build:london": "run-s build build-pages build-data:london",
     "start:london": "run-s build:london serve",
+    "test": "node --test tests/*.test.mjs",
     "build-all": "run-s build build-pages build-data docs",
     "docs": "vuepress build docs --no-cache",
     "docs:dev": "vuepress dev docs --no-cache",
