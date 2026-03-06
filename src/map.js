@@ -2496,6 +2496,10 @@ export default class extends Evented {
             }
             const { railway, stationIndexLookup, stationOffsets, predictions } = active;
             if (train) {
+                if (train.r && train.r.id !== railway.id && train.instanceID !== undefined) {
+                    me.trafficLayer.removeObject(train);
+                }
+                train.r = railway;
                 train._londonRailwayId = railway.id;
             }
 
@@ -2714,6 +2718,8 @@ export default class extends Evented {
                 };
                 me._londonLiveTrafficTrains.set(t.key, train);
             }
+            train.r = railway;
+            train._londonRailwayId = railway.id;
             train._londonProgress = progress;
             train._londonDurationSec = durationSec;
             train._londonLastUpdate = nowOffset;
@@ -2863,6 +2869,12 @@ export default class extends Evented {
             console.warn('[London] TrafficLayer not ready yet');
             return false;
         }
+
+        if (me._londonTrafficComputeRenderer && me._londonTrafficComputeRenderer !== me.trafficLayer.computeRenderer) {
+            me._londonTrafficLayerReady = false;
+            me.clearLondonLiveTrafficTrains();
+        }
+        me._londonTrafficComputeRenderer = me.trafficLayer.computeRenderer;
 
         if (me._londonTrafficLayerReady) {
             return true;
