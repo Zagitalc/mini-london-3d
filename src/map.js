@@ -1,4 +1,5 @@
 import turfBuffer from '@turf/buffer';
+import turfDistance from '@turf/distance';
 import turfLength from '@turf/length';
 import lineSliceAlong from '@turf/line-slice-along';
 import { lineString } from '@turf/helpers';
@@ -16,6 +17,15 @@ import * as helpers from './helpers/helpers';
 import { pickObject } from './helpers/helpers-deck';
 import * as helpersGeojson from './helpers/helpers-geojson';
 import * as helpersMapbox from './helpers/helpers-mapbox';
+import {
+    findFollowingLondonPrediction,
+    inferLondonDirectionStep,
+    LONDON_ROUTE_ENTRY_TTS_THRESHOLD,
+    scoreLondonRouteCandidate,
+    selectLondonNextPrediction,
+    selectLondonStationCandidate,
+    shouldSkipLondonRouteEntry
+} from './helpers/london-live-trains.mjs';
 import { GeoJsonLayer, ThreeLayer, Tile3DLayer, TrafficLayer } from './layers';
 import { loadBusData, loadDynamicBusData, loadDynamicFlightData, loadDynamicTrainData, loadStaticData, loadTimetableData, updateOdptUrl } from './loader';
 import { AboutPanel, BusPanel, LayerPanel, SharePanel, StationPanel, TrainPanel } from './panels';
@@ -30,6 +40,7 @@ const RAILWAY_NAMBOKU = 'TokyoMetro.Namboku',
 const AIRLINES_FOR_ANA_CODE_SHARE = ['ADO', 'SFJ', 'SNJ'];
 const LONDON_DEFAULT_SEGMENT_SPEED_KM_PER_SEC = 0.012;
 const LONDON_OVERLAP_PROGRESS_SPACING = 0.02;
+const LONDON_ROUTE_FEATURE_ZOOMS = [13, 14, 15, 16, 17, 18];
 const LONDON_3D_RAIL_LINE_WIDTH_SCALE_PROFILE = [
     [9, 0.12],
     [10, 0.24],
@@ -851,6 +862,11 @@ export default class extends Evented {
             } else if (!(altitude <= 0)) {
                 // airways and railways (no railway sections)
                 featureLookup.set(properties.id, feature);
+                if (me.city === 'london' && properties.type === 0 && properties.zoom === undefined) {
+                    for (const zoom of LONDON_ROUTE_FEATURE_ZOOMS) {
+                        featureLookup.set(`${properties.id}.${zoom}`, feature);
+                    }
+                }
                 helpersGeojson.updateDistances(feature);
             }
         });
@@ -2064,12 +2080,12 @@ export default class extends Evented {
             .toUpperCase();
     }
 
-    resolveLondonStationInfo(name, stationLookup, stationNameKeys) {
+    getLondonStationInfoCandidates(name, stationLookup, stationNameKeys) {
         const me = this;
         const normalized = me.normalizeLondonStationKey(name);
-        if (!normalized || !stationLookup) return null;
+        if (!normalized || !stationLookup) return [];
         if (stationLookup.has(normalized)) return stationLookup.get(normalized);
-        if (!stationNameKeys || stationNameKeys.size === 0) return null;
+        if (!stationNameKeys || stationNameKeys.size === 0) return [];
 
         const findByPrefix = (key) => {
             let best = null;
@@ -2083,12 +2099,12 @@ export default class extends Evented {
                     }
                 }
             }
-            return best ? stationLookup.get(best) : null;
+            return best ? stationLookup.get(best) : [];
         };
 
         let key = normalized;
         let match = findByPrefix(key);
-        if (match) return match;
+        if (match.length) return match;
 
         // Retry by trimming trailing short tokens (handles truncations like "ST P")
         const tokens = key.split(' ');
@@ -2098,10 +2114,15 @@ export default class extends Evented {
             tokens.pop();
             key = tokens.join(' ');
             match = findByPrefix(key);
-            if (match) return match;
+            if (match.length) return match;
         }
 
-        return null;
+        return [];
+    }
+
+    resolveLondonStationInfo(name, stationLookup, stationNameKeys, stationIndexLookup) {
+        const candidates = this.getLondonStationInfoCandidates(name, stationLookup, stationNameKeys);
+        return selectLondonStationCandidate(candidates, stationIndexLookup);
     }
 
     getLondonRailwayByLineId(lineId) {
@@ -2143,10 +2164,32 @@ export default class extends Evented {
         return me._londonStationIndexLookup.get(railway.id);
     }
 
+    getLondonStationDistance(railway, fromIndex, toIndex) {
+        const me = this;
+        if (!railway || !Array.isArray(railway.stations)) return null;
+        const fromStation = railway.stations[fromIndex];
+        const toStation = railway.stations[toIndex];
+
+        if (!fromStation || !toStation || !Array.isArray(fromStation.coord) || !Array.isArray(toStation.coord)) {
+            return null;
+        }
+        if (!me._londonStationDistanceLookup) {
+            me._londonStationDistanceLookup = new Map();
+        }
+
+        const key = `${railway.id}|${fromIndex}|${toIndex}`;
+
+        if (!me._londonStationDistanceLookup.has(key)) {
+            me._londonStationDistanceLookup.set(key, turfDistance(fromStation.coord, toStation.coord));
+        }
+        return me._londonStationDistanceLookup.get(key);
+    }
+
     updateLondonLiveTrafficTrains(arrivals, stationLookup, railway, stationNameKeys) {
         const me = this;
         const railways = Array.isArray(railway) ? railway.filter(Boolean) : (railway ? [railway] : []);
         if (!railways.length || !me.trafficLayer || !me.trafficLayer.addObject) return;
+        const lineKey = String(railways[0].lineId || railways[0].id || 'london');
 
         const stationIndexLookups = new Map();
         const stationOffsetsLookup = new Map();
@@ -2174,7 +2217,8 @@ export default class extends Evented {
             const match = String(location || '').match(/between\\s+(.+?)\\s+and\\s+(.+)/i);
             return match ? { from: match[1].trim(), to: match[2].trim() } : null;
         };
-        const resolveStationInfo = (value) => me.resolveLondonStationInfo(value, stationLookup, stationNameKeys);
+        const resolveStationInfo = (value, stationIndexLookup) =>
+            me.resolveLondonStationInfo(value, stationLookup, stationNameKeys, stationIndexLookup);
 
         for (const a of arr) {
             if (!a) continue;
@@ -2201,7 +2245,7 @@ export default class extends Evented {
                 a.platformName || ''
             ].filter(Boolean);
             const fallbackKey = fallbackKeyParts.join('|') || `${stationName}|${direction}|${dest}`;
-            const key = vehicleId ? `${vehicleId}|${direction}|${dest}` : `no-vehicle|${fallbackKey}`;
+            const key = vehicleId ? `${lineKey}|${vehicleId}` : `no-vehicle|${lineKey}|${fallbackKey}`;
             if (!byTrain.has(key)) {
                 byTrain.set(key, {
                     key,
@@ -2213,6 +2257,12 @@ export default class extends Evented {
                 });
             }
             const entry = byTrain.get(key);
+            if (!entry.direction && direction) {
+                entry.direction = direction;
+            }
+            if (!entry.dest && dest) {
+                entry.dest = dest;
+            }
             if (!entry.currentLocation && currentLocation) {
                 entry.currentLocation = currentLocation;
             }
@@ -2251,14 +2301,18 @@ export default class extends Evented {
         for (const t of byTrain.values()) {
             let train = me._londonLiveTrafficTrains.get(t.key);
             const candidates = [];
+            const location = String(t.currentLocation || '');
+            const locationLower = location.toLowerCase();
+            const between = parseBetween(location);
             for (const rw of railways) {
                 const stationIndexLookup = stationIndexLookups.get(rw.id);
                 const stationOffsets = stationOffsetsLookup.get(rw.id);
                 if (!stationIndexLookup || !stationOffsets) continue;
                 const predictions = [];
                 for (const a of t.arrivals) {
-                    const stationKey = a.naptanId ? String(a.naptanId).toUpperCase() : me.normalizeLondonStationKey(a.stationName);
-                    const stationInfo = stationLookup.get(stationKey) || resolveStationInfo(a.stationName);
+                    const stationKey = a.naptanId ? String(a.naptanId).toUpperCase() : a.stationName;
+                    const stationInfo = resolveStationInfo(stationKey, stationIndexLookup) ||
+                        resolveStationInfo(a.stationName, stationIndexLookup);
                     if (!stationInfo || !stationInfo.station) continue;
                     const index = stationIndexLookup.get(stationInfo.station.id);
                     if (index === undefined) continue;
@@ -2271,17 +2325,66 @@ export default class extends Evented {
                     });
                 }
                 if (predictions.length) {
-                    candidates.push({ railway: rw, stationIndexLookup, stationOffsets, predictions });
+                    const getCandidateStation = value => {
+                        const resolved = resolveStationInfo(value, stationIndexLookup);
+
+                        return resolved ? resolved.station : null;
+                    };
+                    let currentStation = null;
+                    let prevHintStation = null;
+                    let nextHintStation = null;
+                    let score = predictions.length * 10;
+
+                    if (between && between.from) {
+                        prevHintStation = getCandidateStation(between.from);
+                        if (between.to) {
+                            nextHintStation = getCandidateStation(between.to);
+                        }
+                    } else if (locationLower.startsWith('approaching ')) {
+                        const name = location.replace(/approaching\\s+/i, '').replace(/\\s+platform.*$/i, '');
+                        currentStation = nextHintStation = getCandidateStation(name);
+                    } else if (locationLower.startsWith('left ')) {
+                        const name = location.replace(/left\\s+/i, '').replace(/\\s+platform.*$/i, '');
+                        currentStation = prevHintStation = getCandidateStation(name);
+                    } else if (locationLower.startsWith('leaving ')) {
+                        const name = location.replace(/leaving\\s+/i, '').replace(/\\s+platform.*$/i, '');
+                        currentStation = prevHintStation = getCandidateStation(name);
+                    } else if (locationLower.startsWith('departed ')) {
+                        const name = location.replace(/departed\\s+from\\s+/i, '').replace(/departed\\s+/i, '').replace(/\\s+platform.*$/i, '');
+                        currentStation = prevHintStation = getCandidateStation(name);
+                    } else if (locationLower.startsWith('at ')) {
+                        const name = location.replace(/at\\s+/i, '').replace(/\\s+platform.*$/i, '');
+                        currentStation = prevHintStation = getCandidateStation(name);
+                    }
+
+                    const currentIndexHint = currentStation ? stationIndexLookup.get(currentStation.id) : undefined;
+                    const prevIndexHint = prevHintStation ? stationIndexLookup.get(prevHintStation.id) : undefined;
+                    const nextIndexHint = nextHintStation ? stationIndexLookup.get(nextHintStation.id) : undefined;
+                    score = scoreLondonRouteCandidate({
+                        predictions,
+                        currentIndexHint,
+                        prevIndexHint,
+                        nextIndexHint
+                    });
+                    candidates.push({
+                        railway: rw,
+                        stationIndexLookup,
+                        stationOffsets,
+                        predictions,
+                        score
+                    });
                 }
             }
 
-            let active = null;
-            if (train && train._londonRailwayId) {
-                active = candidates.find(candidate => candidate.railway.id === train._londonRailwayId) || null;
-            }
-            if (!active && candidates.length) {
-                candidates.sort((a, b) => b.predictions.length - a.predictions.length);
-                active = candidates[0];
+            let active = candidates.find(candidate => train && train._londonRailwayId === candidate.railway.id) || null;
+            if (candidates.length) {
+                const getCandidateScore = candidate => candidate.score +
+                    (train && train._londonRailwayId === candidate.railway.id ? 25 : 0);
+
+                candidates.sort((a, b) => getCandidateScore(b) - getCandidateScore(a));
+                if (!active || getCandidateScore(candidates[0]) > getCandidateScore(active)) {
+                    active = candidates[0];
+                }
             }
             if (!active) {
                 preserveTrain(train, {
@@ -2311,30 +2414,32 @@ export default class extends Evented {
             let durationSec = null;
 
             // Keep using currentLocation to find prev/next stations as a hint
-            const location = String(t.currentLocation || '');
-            const locationLower = location.toLowerCase();
-            const between = parseBetween(location);
+            const getResolvedStation = value => {
+                const resolved = resolveStationInfo(value, stationIndexLookup);
+
+                return resolved ? resolved.station : null;
+            };
 
             if (between && between.from) {
-                prevStation = resolveStationInfo(between.from)?.station || null;
+                prevStation = getResolvedStation(between.from);
                 if (between.to) {
-                    nextStation = resolveStationInfo(between.to)?.station || null;
+                    nextStation = getResolvedStation(between.to);
                 }
             } else if (locationLower.startsWith('approaching ')) {
                 const name = location.replace(/approaching\\s+/i, '').replace(/\\s+platform.*$/i, '');
-                nextStation = resolveStationInfo(name)?.station || null;
+                nextStation = getResolvedStation(name);
             } else if (locationLower.startsWith('left ')) {
                 const name = location.replace(/left\\s+/i, '').replace(/\\s+platform.*$/i, '');
-                prevStation = resolveStationInfo(name)?.station || null;
+                prevStation = getResolvedStation(name);
             } else if (locationLower.startsWith('leaving ')) {
                 const name = location.replace(/leaving\\s+/i, '').replace(/\\s+platform.*$/i, '');
-                prevStation = resolveStationInfo(name)?.station || null;
+                prevStation = getResolvedStation(name);
             } else if (locationLower.startsWith('departed ')) {
                 const name = location.replace(/departed\\s+from\\s+/i, '').replace(/departed\\s+/i, '').replace(/\\s+platform.*$/i, '');
-                prevStation = resolveStationInfo(name)?.station || null;
+                prevStation = getResolvedStation(name);
             } else if (locationLower.startsWith('at ')) {
                 const name = location.replace(/at\\s+/i, '').replace(/\\s+platform.*$/i, '');
-                prevStation = resolveStationInfo(name)?.station || null;
+                prevStation = getResolvedStation(name);
             }
 
             if (prevStation) {
@@ -2342,16 +2447,22 @@ export default class extends Evented {
             }
 
             const nextIndexHint = nextStation ? stationIndexLookup.get(nextStation.id) : undefined;
-            let next = null;
-            if (nextIndexHint !== undefined) {
-                next = predictionsByIndex.get(nextIndexHint) || null;
-            }
-            if (!next && prevIndex !== undefined) {
-                next = predictions.find(p => p.stationIndex !== prevIndex) || null;
-            }
-            if (!next) {
-                next = predictions[0];
-            }
+            let directionStep = inferLondonDirectionStep(
+                predictions,
+                prevIndex,
+                nextIndexHint,
+                train && train.sectionLength
+            ) || 1;
+            const next = selectLondonNextPrediction({
+                predictions,
+                predictionsByIndex,
+                prevIndex,
+                nextIndexHint,
+                nextStation,
+                directionStep,
+                locationLower,
+                between: !!between
+            });
             if (!next) {
                 preserveTrain(train, {
                     destinationName: t.dest,
@@ -2360,26 +2471,31 @@ export default class extends Evented {
                 continue;
             }
             const nextIndex = next.stationIndex;
+            const hasLocationHint = !!prevStation || !!nextStation;
 
-            let following = null;
-            for (const p of predictions) {
-                if (p.stationIndex !== nextIndex && p.timeToStation >= next.timeToStation) {
-                    following = p;
-                    break;
-                }
+            // Some TfL line feeds include through-running trains before they enter the
+            // geometry we actually render for that line. Skip those until they are close
+            // enough to the first modeled stop, otherwise they appear to jump onto the
+            // wrong segment and pass through other trains.
+            if (shouldSkipLondonRouteEntry({
+                hasLocationHint,
+                nextTimeToStation: next.timeToStation,
+                threshold: LONDON_ROUTE_ENTRY_TTS_THRESHOLD
+            })) {
+                preserveTrain(train, {
+                    destinationName: t.dest,
+                    timeToStation: next.timeToStation,
+                    currentLocation: t.currentLocation
+                });
+                continue;
             }
 
-            let directionStep = 0;
-            if (following && stationOffsets[nextIndex] !== undefined &&
-                stationOffsets[following.stationIndex] !== undefined) {
-                directionStep = stationOffsets[following.stationIndex] > stationOffsets[nextIndex] ? 1 : -1;
-            } else if (t.direction === 'outbound') {
-                directionStep = 1;
-            } else if (t.direction === 'inbound') {
-                directionStep = -1;
-            } else if (train && typeof train.sectionLength === 'number') {
-                directionStep = train.sectionLength > 0 ? 1 : train.sectionLength < 0 ? -1 : 0;
-            }
+            const following = findFollowingLondonPrediction({
+                predictions,
+                nextIndex,
+                directionStep,
+                nextTimeToStation: next.timeToStation
+            });
 
             if (prevIndex === undefined && directionStep) {
                 prevIndex = nextIndex - directionStep;
@@ -2415,29 +2531,25 @@ export default class extends Evented {
             const sectionLength = nextIndex - prevIndex;
             let segmentLength = null;
 
-            if (stationOffsets && stationOffsets.length > Math.max(prevIndex, nextIndex)) {
-                const offsetPrev = stationOffsets[prevIndex];
-                const offsetNext = stationOffsets[nextIndex];
+            segmentLength = me.getLondonStationDistance(railway, prevIndex, nextIndex);
 
-                if (isFinite(offsetPrev) && isFinite(offsetNext)) {
-                    segmentLength = Math.abs(offsetNext - offsetPrev);
-                    if (segmentLength > 0) {
-                        // Time-based duration calculation
-                        if (following && following.timeToStation > next.timeToStation &&
-                            stationOffsets[following.stationIndex] !== undefined) {
-                            // Calculate speed from the next segment (next -> following)
-                            const offsetFollowing = stationOffsets[following.stationIndex];
-                            const timeForNextSegment = Math.max(1, following.timeToStation - next.timeToStation);
-                            const distanceOfNextSegment = Math.abs(offsetFollowing - offsetNext);
-                            const speed = distanceOfNextSegment / timeForNextSegment;
+            if (segmentLength > 0) {
+                // Only use the following prediction when it is the adjacent next stop.
+                if (following &&
+                    following.stationIndex === nextIndex + directionStep &&
+                    following.timeToStation > next.timeToStation) {
+                    const nextSegmentLength = me.getLondonStationDistance(railway, nextIndex, following.stationIndex);
+                    const timeForNextSegment = Math.max(1, following.timeToStation - next.timeToStation);
 
-                            // Apply that speed to the current segment
-                            durationSec = segmentLength / Math.max(0.0015, Math.min(0.03, speed));
-                        } else {
-                            // Fallback to default speed
-                            durationSec = segmentLength / LONDON_DEFAULT_SEGMENT_SPEED_KM_PER_SEC;
-                        }
+                    if (nextSegmentLength > 0) {
+                        const speed = nextSegmentLength / timeForNextSegment;
+
+                        durationSec = segmentLength / Math.max(0.0015, Math.min(0.03, speed));
                     }
+                }
+
+                if (!durationSec) {
+                    durationSec = segmentLength / LONDON_DEFAULT_SEGMENT_SPEED_KM_PER_SEC;
                 }
             }
 
@@ -2516,7 +2628,7 @@ export default class extends Evented {
             train.currentLocation = t.currentLocation;
             train._tflPrevTime = isFinite(prevEpoch) ? prevEpoch : undefined;
             train._tflNextTime = isFinite(nextEpoch) ? nextEpoch : undefined;
-            train.d = sectionLength >= 0 ? railway.descending : railway.ascending;
+            train.d = sectionLength >= 0 ? railway.ascending : railway.descending;
 
             if (train.instanceID === undefined) {
                 me.trafficLayer.addObject(train);
@@ -2723,6 +2835,18 @@ export default class extends Evented {
         // Build a lookup from station name/naptanId -> { station, lng, lat, color }.
         const stationLookup = new Map();
         const stationNameKeys = new Set();
+        const addStationLookup = (key, info) => {
+            if (!key) return;
+
+            const existing = stationLookup.get(key);
+            if (existing) {
+                if (!existing.some(candidate => candidate.station && candidate.station.id === info.station.id)) {
+                    existing.push(info);
+                }
+            } else {
+                stationLookup.set(key, [info]);
+            }
+        };
         if (me.stations) {
             for (const st of me.stations.getAll()) {
                 if (!st || !st.coord || !st.title) continue;
@@ -2736,16 +2860,16 @@ export default class extends Evented {
                     lat: st.coord[1],
                     color: st.railway?.color
                 };
-                stationLookup.set(norm, info);
+                addStationLookup(norm, info);
                 if (norm) stationNameKeys.add(norm);
                 if (normShort) {
-                    stationLookup.set(normShort, info);
+                    addStationLookup(normShort, info);
                     stationNameKeys.add(normShort);
                 }
                 if (st.id) {
                     const naptan = String(st.id).split('.').pop();
                     if (naptan) {
-                        stationLookup.set(naptan.toUpperCase(), info);
+                        addStationLookup(naptan.toUpperCase(), info);
                     }
                 }
             }
@@ -3839,6 +3963,11 @@ export default class extends Evented {
 
     refreshTrainTimetableData() {
         const me = this;
+
+        if (me.getCityFromLocation() === 'london') {
+            me.timetables.clear();
+            return;
+        }
 
         showLoader(me.container);
         me.timetables.clear();

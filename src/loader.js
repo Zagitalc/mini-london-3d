@@ -87,6 +87,7 @@ function adjustTrainID(id, type, destination) {
  * @param {string} lang - IETF language tag for dictionary
  * @param {Promise} clockPromise - Promise for the Clock object representing the
  *     current time
+ * @param {string} city - City identifier
  * @returns {Object} Loaded data
  */
 export function loadStaticData(dataUrl, lang, clockPromise, city) {
@@ -98,12 +99,8 @@ export function loadStaticData(dataUrl, lang, clockPromise, city) {
             loadJSON(`${dataUrl}/features.json.gz`),
             loadJSON(`${dataUrl}/rail-directions.json.gz`),
             loadJSON(`${dataUrl}/train-types.json.gz`),
-            loadJSON(`${dataUrl}/train-vehicles.json.gz`),
-            clockPromise.then(clock => Promise.all([
-                getTimetableFileName(clock),
-                ...getExtraTimetableFileNames(clock)
-            ].map(fileName => `${dataUrl}/${fileName}`).map(loadJSON))).then(data => [].concat(...data))
-        ]).then(([dict, railwayData, stationData, featureCollection, railDirectionData, trainTypeData, trainVehicleData, timetableData]) => ({
+            loadJSON(`${dataUrl}/train-vehicles.json.gz`)
+        ]).then(([dict, railwayData, stationData, featureCollection, railDirectionData, trainTypeData, trainVehicleData]) => ({
             dict,
             railwayData,
             stationData,
@@ -115,7 +112,7 @@ export function loadStaticData(dataUrl, lang, clockPromise, city) {
             airportData: [],
             flightStatusData: [],
             poiData: [],
-            timetableData
+            timetableData: []
         }));
     }
 

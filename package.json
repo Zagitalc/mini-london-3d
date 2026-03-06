@@ -65,6 +65,7 @@
     "vuepress-plugin-flexsearch": "^0.3.0"
   },
   "scripts": {
+    "start": "run-s build:london serve",
     "build": "rollup -c",
     "build-pages": "rm -rf build; cp -r public build; cp .npmignore dist/mini-tokyo-3d.min.* build; mkdir -p build/assets; cp assets/dictionary-*.json assets/style.json build/assets",
     "build-data": "rm -rf build/data; mkdir -p build/data; cp assets/dictionary-*.json assets/osm-liberty.json build/data; node dist/loader",
@@ -75,6 +76,7 @@
     "serve": "npx serve build",
     "build:london": "run-s build build-pages build-data:london",
     "start:london": "run-s build:london serve",
+    "test": "node --test tests/*.test.mjs",
     "build-all": "run-s build build-pages build-data docs",
     "docs": "vuepress build docs --no-cache",
     "docs:dev": "vuepress dev docs --no-cache",
