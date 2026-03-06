@@ -3,6 +3,11 @@ import turfLength from '@turf/length';
 import turfDistance from '@turf/distance';
 import lineSliceAlong from '@turf/line-slice-along';
 import { lineString, point } from '@turf/helpers';
+import {
+    getOrderedLondonStationOffsets,
+    shouldUseStationOrderGeometry,
+    smoothLondonStationLine
+} from '../helpers/london-geometry.mjs';
 import { updateDistances } from '../helpers/helpers-geojson';
 import { loadJSON, saveJSON } from './helpers';
 
@@ -173,12 +178,26 @@ function buildFeatures(railways, stationLookup, geometryLookup) {
 
         if (baseLineCoords.length < 2) continue;
 
-        const lineCoords = reorderLineByStations(baseLineCoords, stationCoords);
-        const line = lineString(lineCoords);
-        const length = turfLength(line);
-        const stationOffsets = stationCoords.map(coord =>
+        let lineCoords = reorderLineByStations(baseLineCoords, stationCoords);
+        let line = lineString(lineCoords);
+        let stationOffsets = stationCoords.map(coord =>
             nearestPointOnLine(line, point(coord)).properties.location
         );
+
+        if (shouldUseStationOrderGeometry(stationOffsets, stationCoords)) {
+            lineCoords = smoothLondonStationLine(stationCoords);
+            line = lineString(lineCoords);
+            stationOffsets = stationCoords.map(coord =>
+                nearestPointOnLine(line, point(coord)).properties.location
+            );
+            if (shouldUseStationOrderGeometry(stationOffsets, stationCoords)) {
+                lineCoords = stationCoords.slice();
+                line = lineString(lineCoords);
+                stationOffsets = getOrderedLondonStationOffsets(stationCoords);
+            }
+        }
+
+        const length = turfLength(line);
 
         const feature = {
             type: 'Feature',
