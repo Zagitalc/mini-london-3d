@@ -87,6 +87,7 @@ function adjustTrainID(id, type, destination) {
  * @param {string} lang - IETF language tag for dictionary
  * @param {Promise} clockPromise - Promise for the Clock object representing the
  *     current time
+ * @param {string} city - City identifier
  * @returns {Object} Loaded data
  */
 export function loadStaticData(dataUrl, lang, clockPromise, city) {
