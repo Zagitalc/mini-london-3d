@@ -7,7 +7,6 @@ import { updateDistances } from '../helpers/helpers-geojson';
 import { loadJSON, saveJSON } from './helpers';
 
 const DATA_DIR = process.env.MT3D_DATA_DIR || 'data';
-const ZOOMS = [13, 14, 15, 16, 17, 18];
 const TFL_LINE_COLORS = {
     bakerloo: '#B36305',
     central: '#E32017',
@@ -181,27 +180,24 @@ function buildFeatures(railways, stationLookup, geometryLookup) {
             nearestPointOnLine(line, point(coord)).properties.location
         );
 
-        for (const zoom of ZOOMS) {
-            const feature = {
-                type: 'Feature',
-                geometry: {
-                    type: 'LineString',
-                    coordinates: lineCoords
-                },
-                properties: {
-                    id: `${railway.id}.${zoom}`,
-                    type: 0,
-                    color: getRailwayColor(railway),
-                    width: 8,
-                    zoom,
-                    altitude: 1,
-                    length,
-                    'station-offsets': stationOffsets
-                }
-            };
-            updateDistances(feature);
-            features.push(feature);
-        }
+        const feature = {
+            type: 'Feature',
+            geometry: {
+                type: 'LineString',
+                coordinates: lineCoords
+            },
+            properties: {
+                id: railway.id,
+                type: 0,
+                color: getRailwayColor(railway),
+                width: 8,
+                altitude: 1,
+                length,
+                'station-offsets': stationOffsets
+            }
+        };
+        updateDistances(feature);
+        features.push(feature);
     }
 
     return {

@@ -40,6 +40,7 @@ const RAILWAY_NAMBOKU = 'TokyoMetro.Namboku',
 const AIRLINES_FOR_ANA_CODE_SHARE = ['ADO', 'SFJ', 'SNJ'];
 const LONDON_DEFAULT_SEGMENT_SPEED_KM_PER_SEC = 0.012;
 const LONDON_OVERLAP_PROGRESS_SPACING = 0.02;
+const LONDON_ROUTE_FEATURE_ZOOMS = [13, 14, 15, 16, 17, 18];
 const LONDON_3D_RAIL_LINE_WIDTH_SCALE_PROFILE = [
     [9, 0.12],
     [10, 0.24],
@@ -861,6 +862,11 @@ export default class extends Evented {
             } else if (!(altitude <= 0)) {
                 // airways and railways (no railway sections)
                 featureLookup.set(properties.id, feature);
+                if (me.city === 'london' && properties.type === 0 && properties.zoom === undefined) {
+                    for (const zoom of LONDON_ROUTE_FEATURE_ZOOMS) {
+                        featureLookup.set(`${properties.id}.${zoom}`, feature);
+                    }
+                }
                 helpersGeojson.updateDistances(feature);
             }
         });
