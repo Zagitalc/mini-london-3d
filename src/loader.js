@@ -96,14 +96,16 @@ export function loadStaticData(dataUrl, lang, clockPromise, city) {
             loadJSON(`assets/dictionary-${lang}.json`),
             loadJSON(`${dataUrl}/railways.json.gz`),
             loadJSON(`${dataUrl}/stations.json.gz`),
+            loadJSON(`${dataUrl}/station-groups.json.gz`),
             loadJSON(`${dataUrl}/features.json.gz`),
             loadJSON(`${dataUrl}/rail-directions.json.gz`),
             loadJSON(`${dataUrl}/train-types.json.gz`),
             loadJSON(`${dataUrl}/train-vehicles.json.gz`)
-        ]).then(([dict, railwayData, stationData, featureCollection, railDirectionData, trainTypeData, trainVehicleData]) => ({
+        ]).then(([dict, railwayData, stationData, stationGroupData, featureCollection, railDirectionData, trainTypeData, trainVehicleData]) => ({
             dict,
             railwayData,
             stationData,
+            stationGroupData,
             featureCollection,
             railDirectionData,
             trainTypeData,
@@ -122,6 +124,7 @@ export function loadStaticData(dataUrl, lang, clockPromise, city) {
         ...[
             'railways.json.gz',
             'stations.json.gz',
+            'station-groups.json.gz',
             'features.json.gz',
             'rail-directions.json.gz',
             'train-types.json.gz',
@@ -139,15 +142,16 @@ export function loadStaticData(dataUrl, lang, clockPromise, city) {
         dict: data[0],
         railwayData: data[1],
         stationData: data[2],
-        featureCollection: data[3],
-        railDirectionData: data[4],
-        trainTypeData: data[5],
-        trainVehicleData: data[6],
-        operatorData: data[7],
-        airportData: data[8],
-        flightStatusData: data[9],
-        poiData: data[10],
-        timetableData: [].concat(...data[11])
+        stationGroupData: data[3],
+        featureCollection: data[4],
+        railDirectionData: data[5],
+        trainTypeData: data[6],
+        trainVehicleData: data[7],
+        operatorData: data[8],
+        airportData: data[9],
+        flightStatusData: data[10],
+        poiData: data[11],
+        timetableData: [].concat(...data[12])
     }));
 }
 

@@ -26,6 +26,7 @@ import {
     selectLondonStationCandidate,
     shouldSkipLondonRouteEntry
 } from './helpers/london-live-trains.mjs';
+import { applyLondonStationGroups } from './helpers/london-stations.mjs';
 import { GeoJsonLayer, ThreeLayer, Tile3DLayer, TrafficLayer } from './layers';
 import { loadBusData, loadDynamicBusData, loadDynamicFlightData, loadDynamicTrainData, loadStaticData, loadTimetableData, updateOdptUrl } from './loader';
 import { AboutPanel, BusPanel, LayerPanel, SharePanel, StationPanel, TrainPanel } from './panels';
@@ -842,6 +843,23 @@ export default class extends Evented {
             railDirections: me.railDirections,
             pois: me.pois
         });
+
+        if (me.city === 'london') {
+            applyLondonStationGroups(me.stations.getAll(), data.stationGroupData || []);
+            for (const station of me.stations.getAll()) {
+                const group = station.group || station.id;
+
+                if (!stationGroupLookup.has(group)) {
+                    stationGroupLookup.set(group, {
+                        id: group,
+                        type: 'station',
+                        stations: [],
+                        layer: group.endsWith('.ug') ? 'underground' : 'ground'
+                    });
+                }
+                stationGroupLookup.get(group).stations.push(station);
+            }
+        }
 
         // Build feature lookup dictionary and update feature properties
         featureEach(me.featureCollection, feature => {
