@@ -26,6 +26,7 @@ import {
     selectLondonStationCandidate,
     shouldSkipLondonRouteEntry
 } from './helpers/london-live-trains.mjs';
+import { getLondonStationAnchor } from './helpers/london-geometry.mjs';
 import { applyLondonStationGroups } from './helpers/london-stations.mjs';
 import { GeoJsonLayer, ThreeLayer, Tile3DLayer, TrafficLayer } from './layers';
 import { loadBusData, loadDynamicBusData, loadDynamicFlightData, loadDynamicTrainData, loadStaticData, loadTimetableData, updateOdptUrl } from './loader';
@@ -1904,11 +1905,7 @@ export default class extends Evented {
         for (const entry of stationGroupLookup.values()) {
             if (!entry.stations.length) continue;
             const lines = Array.from(entry.lineLookup.values()).sort((a, b) => a.title.localeCompare(b.title));
-            const center = entry.stations.reduce((acc, st) => {
-                acc[0] += st.coord[0];
-                acc[1] += st.coord[1];
-                return acc;
-            }, [0, 0]).map(v => v / entry.stations.length);
+            const center = getLondonStationAnchor(entry.stations);
             const first = entry.stations[0];
             const title = stationTitle(first);
             const interchange = lines.length >= 2;
