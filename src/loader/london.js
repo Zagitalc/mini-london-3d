@@ -207,9 +207,10 @@ function buildFeatures(railways, stationLookup, geometryLookup) {
 }
 
 export default async function () {
-    const [railways, stations] = await Promise.all([
+    const [railways, stations, stationGroups] = await Promise.all([
         loadJSON(`${DATA_DIR}/railways.json`),
-        loadJSON(`${DATA_DIR}/stations.json`)
+        loadJSON(`${DATA_DIR}/stations.json`),
+        loadJSON(`${DATA_DIR}/station-groups.json`).catch(() => [])
     ]);
     const geometryData = await loadJSON(`${DATA_DIR}/railway-geometries.json`).catch(() => null);
     const geometryLookup = buildGeometryLookup(geometryData);
@@ -233,6 +234,7 @@ export default async function () {
 
     saveJSON('build/data/features.json.gz', featureCollection);
     saveJSON('build/data/rail-directions.json.gz', railDirections);
+    saveJSON('build/data/station-groups.json.gz', stationGroups);
     saveJSON('build/data/train-types.json.gz', []);
     saveJSON('build/data/train-vehicles.json.gz', []);
 }
