@@ -1117,17 +1117,18 @@ export default class extends Evented {
 
         // London: add a deck.gl rail line layer so 3D trains align with the line at pitch.
         if (isLondon && featureCollection && (featureCollection.features || []).length) {
+            const londonRailLineData = helpersGeojson.featureFilter(featureCollection, p =>
+                p.type === 0 && !(p.altitude <= 0)
+            );
+
             for (const zoom of [13, 14, 15, 16, 17, 18]) {
                 const lineWidthScale = getZoomProfileValue(initialZoom, LONDON_3D_RAIL_LINE_WIDTH_SCALE_PROFILE);
-                const lineData = helpersGeojson.featureFilter(featureCollection, p =>
-                    p.zoom === zoom && p.type === 0
-                );
-                if (!lineData.features.length) continue;
+                if (!londonRailLineData.features.length) continue;
                 const layerId = `london-railways-3d-${zoom}`;
                 me.addLayer({
                     id: layerId,
                     type: 'geojson',
-                    data: lineData,
+                    data: londonRailLineData,
                     filled: false,
                     getLineWidth: d => d.properties.width || 8,
                     getLineColor: d => helpers.colorToRGBArray(d.properties.color || '#0098D4'),
