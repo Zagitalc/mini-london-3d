@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ja_JP" style="overscroll-behavior: none">
+<html lang="en-GB" style="overscroll-behavior: none">
   <head>
     <script
       async
@@ -29,7 +29,7 @@
       property="og:description"
       content="A real-time 3D digital map of London's public transport system."
     />
-    <meta property="og:locale" content="ja_JP" />
+    <meta property="og:locale" content="en_GB" />
     <link rel="canonical" href="https://minitokyo3d.com" />
     <meta property="og:url" content="https://minitokyo3d.com" />
     <meta property="og:site_name" content="Mini London 3D" />
@@ -117,6 +117,13 @@
       const city = matchCity
         ? decodeURIComponent(matchCity[1]).toLowerCase()
         : null;
+
+      if (!options.lang && city === "london") {
+        options.lang = "en";
+      }
+
+      document.documentElement.lang =
+        options.lang === "ja" ? "ja-JP" : "en-GB";
 
       const hasHashView =
         matchHash &&

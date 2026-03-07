@@ -1174,11 +1174,17 @@
 
 .mini-tokyo-3d.is-london {
     --london-bg: #f6f6f4;
-    --london-surface: rgba(255, 255, 255, 0.94);
+    --london-surface: rgba(255, 255, 255, 0.9);
+    --london-surface-strong: rgba(255, 255, 255, 0.94);
     --london-border: #d8d8d4;
     --london-text: #171717;
     --london-muted: #606060;
     --london-blue: #113b92;
+    --london-card-bg: rgba(255, 255, 255, 0.8);
+    --london-field-bg: rgba(248, 248, 248, 0.9);
+    --london-hover: rgba(17, 59, 146, 0.08);
+    --london-button-bg: rgba(255, 255, 255, 0.72);
+    --london-card-muted-bg: rgba(255, 255, 255, 0.5);
     --london-shadow: 0 12px 30px rgba(0, 0, 0, 0.08);
     background:
         radial-gradient(circle at top left, rgba(17, 59, 146, 0.08), transparent 30%),
@@ -1186,16 +1192,37 @@
     color: var(--london-text);
     font-family: "Public Sans", "Helvetica Neue", Arial, sans-serif;
 }
+.mini-tokyo-3d.is-london.london-theme-dark {
+    --london-bg: #061125;
+    --london-surface: rgba(7, 18, 42, 0.88);
+    --london-surface-strong: rgba(6, 16, 38, 0.95);
+    --london-border: rgba(116, 138, 180, 0.2);
+    --london-text: #f6f7fb;
+    --london-muted: #94a0bc;
+    --london-blue: #53b4ff;
+    --london-card-bg: rgba(10, 20, 46, 0.76);
+    --london-field-bg: rgba(8, 18, 42, 0.9);
+    --london-hover: rgba(83, 180, 255, 0.12);
+    --london-button-bg: rgba(8, 18, 42, 0.78);
+    --london-card-muted-bg: rgba(10, 20, 46, 0.6);
+    --london-shadow: 0 20px 44px rgba(0, 0, 0, 0.34);
+    background:
+        radial-gradient(circle at top left, rgba(27, 109, 255, 0.18), transparent 28%),
+        linear-gradient(180deg, #030814 0%, #061125 100%);
+}
+.mini-tokyo-3d.is-london.london-theme-dark .mapboxgl-canvas {
+    filter: brightness(0.72) saturate(0.92) contrast(1.08);
+}
 .mini-tokyo-3d.is-london #loading-error,
 .mini-tokyo-3d.is-london .loader-inner {
-    background: rgba(255, 255, 255, 0.9);
+    background: var(--london-surface-strong);
     border: 1px solid var(--london-border);
     color: var(--london-text);
     box-shadow: var(--london-shadow);
 }
 .mini-tokyo-3d.is-london .mapboxgl-ctrl-top-left,
 .mini-tokyo-3d.is-london .mapboxgl-ctrl-top-right {
-    top: 72px;
+    top: 108px;
 }
 .mini-tokyo-3d.is-london .mapboxgl-ctrl-top-left {
     left: 16px;
@@ -1282,7 +1309,7 @@
     padding: 10px 14px;
     border: 1px solid var(--london-border);
     border-radius: 20px;
-    background: rgba(255, 255, 255, 0.9);
+    background: var(--london-surface-strong);
     box-shadow: var(--london-shadow);
     backdrop-filter: blur(16px);
 }
@@ -1345,7 +1372,7 @@
 .mini-tokyo-3d.is-london .london-panel-close {
     appearance: none;
     border: 1px solid var(--london-border);
-    background: rgba(255, 255, 255, 0.72);
+    background: var(--london-button-bg);
     color: var(--london-text);
     cursor: pointer;
     transition: background-color .18s ease, border-color .18s ease, color .18s ease, transform .18s ease;
@@ -1355,7 +1382,7 @@
 .mini-tokyo-3d.is-london .london-secondary-button:hover,
 .mini-tokyo-3d.is-london .london-filter-reset:hover,
 .mini-tokyo-3d.is-london .london-panel-close:hover {
-    background: rgba(17, 59, 146, 0.08);
+    background: var(--london-hover);
     border-color: rgba(17, 59, 146, 0.22);
 }
 .mini-tokyo-3d.is-london .london-topbar-button {
@@ -1407,7 +1434,7 @@
 .mini-tokyo-3d.is-london .london-search-panel,
 .mini-tokyo-3d.is-london .london-station-drawer {
     position: absolute;
-    background: rgba(255, 255, 255, 0.92);
+    background: var(--london-surface-strong);
     border: 1px solid var(--london-border);
     box-shadow: var(--london-shadow);
     backdrop-filter: blur(18px);
@@ -1491,7 +1518,7 @@
     padding: 0 14px;
     border: 1px solid var(--london-border);
     border-radius: 16px;
-    background: rgba(248, 248, 248, 0.88);
+    background: var(--london-field-bg);
 }
 .mini-tokyo-3d.is-london .london-search-field input {
     width: 100%;
@@ -1524,7 +1551,7 @@
 .mini-tokyo-3d.is-london .london-severe-summary {
     border: 1px solid var(--london-border);
     border-radius: 16px;
-    background: rgba(255, 255, 255, 0.8);
+    background: var(--london-card-bg);
 }
 .mini-tokyo-3d.is-london .london-search-result,
 .mini-tokyo-3d.is-london .london-line-option {
@@ -1534,18 +1561,18 @@
     align-items: center;
     gap: 12px;
     border: 1px solid var(--london-border);
-    background: rgba(255, 255, 255, 0.76);
+    background: var(--london-card-bg);
     cursor: pointer;
     text-align: left;
 }
 .mini-tokyo-3d.is-london .london-search-result:hover,
 .mini-tokyo-3d.is-london .london-line-option:hover {
-    background: rgba(17, 59, 146, 0.06);
+    background: var(--london-hover);
     border-color: rgba(17, 59, 146, 0.18);
 }
 .mini-tokyo-3d.is-london .london-line-option.active {
     border-color: rgba(17, 59, 146, 0.24);
-    background: rgba(17, 59, 146, 0.08);
+    background: var(--london-hover);
 }
 .mini-tokyo-3d.is-london .result-title,
 .mini-tokyo-3d.is-london .line-title {
@@ -1637,7 +1664,8 @@
     font-size: 12px;
     font-weight: 700;
     color: var(--london-text);
-    background: rgba(17, 59, 146, 0.08);
+    background: color-mix(in srgb, var(--line-color, var(--london-blue)) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--line-color, var(--london-blue)) 26%, transparent);
 }
 .mini-tokyo-3d.is-london .london-drawer-section {
     display: flex;
@@ -1691,7 +1719,7 @@
     overflow: auto;
     border: 1px solid var(--london-border);
     border-radius: 28px;
-    background: rgba(255, 255, 255, 0.94);
+    background: var(--london-surface-strong);
     box-shadow: 0 24px 48px rgba(0, 0, 0, 0.16);
     transform: translate(-50%, -50%);
 }
@@ -1760,12 +1788,193 @@
     justify-content: space-between;
     gap: 12px;
 }
+.mini-tokyo-3d.is-london .london-theme-toggle {
+    min-width: 84px;
+    justify-content: center;
+}
+.mini-tokyo-3d.is-london .london-theme-toggle-icon {
+    font-size: 15px;
+    line-height: 1;
+}
+.mini-tokyo-3d.is-london .london-station-header {
+    align-items: flex-start;
+}
+.mini-tokyo-3d.is-london .london-station-drawer-scroll {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    min-height: 0;
+}
+.mini-tokyo-3d.is-london .london-section-heading-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+.mini-tokyo-3d.is-london .london-status-alert {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 15px;
+    border: 1px solid var(--london-border);
+    border-radius: 18px;
+    background: var(--london-card-bg);
+}
+.mini-tokyo-3d.is-london .london-status-alert.good {
+    border-color: rgba(21, 128, 61, 0.18);
+}
+.mini-tokyo-3d.is-london .london-status-alert.minor {
+    border-color: rgba(180, 83, 9, 0.24);
+}
+.mini-tokyo-3d.is-london .london-status-alert.severe {
+    border-color: rgba(185, 28, 28, 0.26);
+}
+.mini-tokyo-3d.is-london .london-status-alert-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    font-size: 14px;
+    font-weight: 800;
+    color: #fff;
+    background: #d97706;
+}
+.mini-tokyo-3d.is-london .london-status-alert.good .london-status-alert-icon {
+    background: #15803d;
+}
+.mini-tokyo-3d.is-london .london-status-alert.severe .london-status-alert-icon {
+    background: #dc2626;
+}
+.mini-tokyo-3d.is-london .london-status-alert-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.mini-tokyo-3d.is-london .london-status-alert-copy strong,
+.mini-tokyo-3d.is-london .london-departure-card strong {
+    color: var(--london-text);
+    font-weight: 700;
+}
+.mini-tokyo-3d.is-london .london-status-alert-copy p,
+.mini-tokyo-3d.is-london .london-capacity-copy {
+    margin: 0;
+    color: var(--london-muted);
+    line-height: 1.55;
+}
+.mini-tokyo-3d.is-london .london-capacity-badge {
+    min-height: 28px;
+    padding: 0 10px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    border: 1px solid var(--london-border);
+    color: var(--london-muted);
+    background: var(--london-card-bg);
+}
+.mini-tokyo-3d.is-london .london-capacity-badge.good {
+    color: #15803d;
+}
+.mini-tokyo-3d.is-london .london-capacity-badge.minor {
+    color: #b45309;
+}
+.mini-tokyo-3d.is-london .london-capacity-badge.severe {
+    color: #b91c1c;
+}
+.mini-tokyo-3d.is-london .london-crowding-meter {
+    height: 10px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: color-mix(in srgb, var(--london-border) 70%, transparent);
+}
+.mini-tokyo-3d.is-london .london-crowding-fill {
+    display: block;
+    height: 100%;
+    width: 0;
+    background: #64748b;
+    border-radius: 999px;
+}
+.mini-tokyo-3d.is-london .london-crowding-fill.good {
+    background: linear-gradient(90deg, #16a34a, #22c55e);
+}
+.mini-tokyo-3d.is-london .london-crowding-fill.minor {
+    background: linear-gradient(90deg, #f59e0b, #fb923c);
+}
+.mini-tokyo-3d.is-london .london-crowding-fill.severe {
+    background: linear-gradient(90deg, #ef4444, #dc2626);
+}
+.mini-tokyo-3d.is-london .london-section-divider {
+    width: 100%;
+    height: 1px;
+    background: var(--london-border);
+    opacity: 0.8;
+}
+.mini-tokyo-3d.is-london .london-direction-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.mini-tokyo-3d.is-london .london-departure-heading {
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--london-muted);
+    font-size: 13px;
+}
+.mini-tokyo-3d.is-london .london-departure-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 15px 16px;
+    border: 1px solid var(--london-border);
+    border-radius: 16px;
+    background: var(--london-card-bg);
+}
+.mini-tokyo-3d.is-london .london-departure-card-main {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+.mini-tokyo-3d.is-london .london-departure-card-main span {
+    color: var(--london-muted);
+    font-size: 12px;
+}
+.mini-tokyo-3d.is-london .london-primary-button {
+    width: 100%;
+    min-height: 48px;
+    border: 0;
+    border-radius: 14px;
+    background: var(--london-blue);
+    color: #fff;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform .18s ease, filter .18s ease;
+}
+.mini-tokyo-3d.is-london .london-primary-button:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.05);
+}
+.mini-tokyo-3d.is-london .london-drawer-footer {
+    padding-top: 4px;
+    flex-direction: column;
+    align-items: stretch;
+}
+.mini-tokyo-3d.is-london .london-drawer-footer span {
+    align-self: center;
+}
 .mini-tokyo-3d.is-london .london-empty-state {
     padding: 14px;
     border: 1px dashed var(--london-border);
     border-radius: 16px;
     color: var(--london-muted);
-    background: rgba(255, 255, 255, 0.5);
+    background: var(--london-card-muted-bg);
 }
 .mini-tokyo-3d.is-london .london-station-popup-wrap .mapboxgl-popup-content {
     border-radius: 14px;
@@ -1798,7 +2007,7 @@
 @media (max-width: 960px) {
     .mini-tokyo-3d.is-london .mapboxgl-ctrl-top-left,
     .mini-tokyo-3d.is-london .mapboxgl-ctrl-top-right {
-        top: 84px;
+        top: 148px;
     }
     .mini-tokyo-3d.is-london .london-topbar {
         flex-wrap: wrap;

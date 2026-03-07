@@ -41,6 +41,7 @@ const AIRLINES_FOR_ANA_CODE_SHARE = ['ADO', 'SFJ', 'SNJ'];
 const LONDON_DEFAULT_SEGMENT_SPEED_KM_PER_SEC = 0.012;
 const LONDON_OVERLAP_PROGRESS_SPACING = 0.02;
 const LONDON_ROUTE_FEATURE_ZOOMS = [13, 14, 15, 16, 17, 18];
+const LONDON_THEME_STORAGE_KEY = 'mt3d:london-theme';
 const LONDON_3D_RAIL_LINE_WIDTH_SCALE_PROFILE = [
     [9, 0.12],
     [10, 0.24],
@@ -129,6 +130,17 @@ function getLondonDirectionLabel(label, destinationName) {
     return clean;
 }
 
+function formatLondonUpdatedTime(value, lang) {
+    if (!value) {
+        return 'Not updated';
+    }
+    return new Intl.DateTimeFormat(lang || 'en', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    }).format(new Date(value));
+}
+
 function buildFeatureCollection(features) {
     return {
         type: 'FeatureCollection',
@@ -202,6 +214,7 @@ export default class extends Evented {
         if (city === 'london') {
             options.searchControl = false;
             options.configControl = false;
+            options.modeControl = false;
         }
         const defaultCenter = configs.defaultCenter;
         let hasCustomCenter = false;
@@ -266,7 +279,7 @@ export default class extends Evented {
         me.initialSelection = options.selection;
         me.clockMode = options.clockMode ||
             configs.defaultClockMode ||
-            (city === 'london' ? 'playback' : 'realtime');
+            'realtime';
         me.isEditingTime = false;
         me.ecoMode = options.ecoMode;
         me.ecoFrameRate = options.ecoFrameRate;
@@ -279,6 +292,10 @@ export default class extends Evented {
         me._londonLineStatusLookup = new Map();
         me._londonLineStatusPollMs = 60000;
         me._londonLiveTrainPollMs = 10000;
+        me._londonTheme = 'light';
+        me._londonStationDrawerData = null;
+        me._londonStationDrawerRequestId = 0;
+        me._londonStationDrawerPollMs = 30000;
 
         // The inner map container overrides the option
         options.container = initContainer(me.container);
@@ -1644,6 +1661,22 @@ export default class extends Evented {
             me.startLondonLineStatusPolling({ pollMs: me._londonLineStatusPollMs });
         }
 
+        const getLondonStationSelectionFromPoint = point => {
+            if (me.getCityFromLocation() !== 'london') {
+                return null;
+            }
+            const hitLayers = ['london-stations', 'london-station-pills', 'london-station-pills-outline']
+                .filter(id => map.getLayer(id));
+            if (!hitLayers.length) {
+                return null;
+            }
+            const hit = map.queryRenderedFeatures(point, { layers: hitLayers })[0];
+            if (!hit) {
+                return null;
+            }
+            return me.getLondonStationSelection(hit.properties && hit.properties.group);
+        };
+
         map.on('mousemove', e => {
             if (me.getCityFromLocation() === 'london') {
                 const hoverLayers = ['london-stations', 'london-station-pills', 'london-station-pills-outline']
@@ -1669,21 +1702,11 @@ export default class extends Evented {
 
         map.on('click', e => {
             if (me.getCityFromLocation() === 'london') {
-                const clickLayers = ['london-stations', 'london-station-pills', 'london-station-pills-outline']
-                    .filter(id => map.getLayer(id));
-                if (clickLayers.length) {
-                    const stationClickHit = map.queryRenderedFeatures(e.point, {
-                        layers: clickLayers
-                    })[0];
-                    if (stationClickHit) {
-                        const selection = me.getLondonStationSelection(stationClickHit.properties && stationClickHit.properties.group);
-
-                        if (selection) {
-                            me.markObject(selection);
-                            me.trackObject(selection);
-                        }
-                        return;
-                    }
+                const selection = getLondonStationSelectionFromPoint(e.point);
+                if (selection) {
+                    me.markObject(selection);
+                    me.trackObject(selection);
+                    return;
                 }
             }
             const object = me.pickObject(e.point);
@@ -2643,8 +2666,188 @@ export default class extends Evented {
         }, pollMs);
     }
 
+    initLondonTheme() {
+        const me = this;
+        let storedTheme = null;
+
+        if (typeof window !== 'undefined') {
+            try {
+                storedTheme = window.localStorage.getItem(LONDON_THEME_STORAGE_KEY);
+            } catch {
+                storedTheme = null;
+            }
+        }
+
+        if (storedTheme === 'dark' || storedTheme === 'light') {
+            me._londonTheme = storedTheme;
+        } else if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+            me._londonTheme = 'dark';
+        } else {
+            me._londonTheme = 'light';
+        }
+        me.applyLondonTheme();
+    }
+
+    applyLondonTheme() {
+        const me = this;
+
+        if (!me.container) {
+            return;
+        }
+        me.container.classList.toggle('london-theme-dark', me._londonTheme === 'dark');
+        me.container.classList.toggle('london-theme-light', me._londonTheme !== 'dark');
+    }
+
+    toggleLondonTheme(forceTheme) {
+        const me = this;
+        const nextTheme = forceTheme || (me._londonTheme === 'dark' ? 'light' : 'dark');
+
+        me._londonTheme = nextTheme === 'dark' ? 'dark' : 'light';
+        if (typeof window !== 'undefined') {
+            try {
+                window.localStorage.setItem(LONDON_THEME_STORAGE_KEY, me._londonTheme);
+            } catch {
+                // Ignore storage failures.
+            }
+        }
+        me.applyLondonTheme();
+        me.renderLondonShell();
+        me.renderLondonSearchPanel();
+        me.renderLondonStationDrawer();
+    }
+
+    getLondonStationStopPointIds(selection) {
+        const ids = new Set();
+
+        for (const station of (selection && selection.stations) || []) {
+            const stopPointId = String(station && station.id || '').split('.').pop();
+
+            if (stopPointId) {
+                ids.add(stopPointId.toUpperCase());
+            }
+        }
+        return Array.from(ids);
+    }
+
+    normalizeLondonStationDepartureRecords(arrivals) {
+        const me = this;
+        const lineCatalog = new Map(me.getLondonLineCatalog().map(line => [line.lineId, line]));
+        const records = [];
+        const seen = new Set();
+
+        for (const arrival of arrivals || []) {
+            if (!arrival) continue;
+            const lineId = getLondonLineKey(arrival.lineId || arrival.lineName);
+            const line = lineCatalog.get(lineId);
+            const expectedArrival = arrival.expectedArrival ? Date.parse(arrival.expectedArrival) : NaN;
+            const etaMs = Number.isFinite(arrival.timeToStation) ? arrival.timeToStation * 1000 :
+                Number.isFinite(expectedArrival) ? Math.max(0, expectedArrival - Date.now()) : NaN;
+            const platformName = String(arrival.platformName || '').trim();
+            const directionLabel = getLondonDirectionLabel(arrival.direction || platformName, arrival.destinationName);
+            const key = [
+                lineId,
+                arrival.destinationName || '',
+                platformName,
+                Number.isFinite(expectedArrival) ? expectedArrival : arrival.timeToStation || ''
+            ].join('|');
+
+            if (seen.has(key)) continue;
+            seen.add(key);
+
+            records.push({
+                id: key,
+                lineId,
+                color: (line && line.color) || '#0098D4',
+                lineTitle: (line && line.title) || String(arrival.lineName || lineId || 'Line'),
+                destination: String(arrival.destinationName || 'Destination unavailable'),
+                directionLabel,
+                etaMs,
+                etaLabel: formatLondonCountdown(etaMs),
+                platformName: platformName || 'Platform unavailable',
+                sortKey: Number.isFinite(etaMs) ? etaMs : Infinity
+            });
+        }
+
+        records.sort((a, b) => a.sortKey - b.sortKey || a.destination.localeCompare(b.destination));
+        return records.slice(0, 12);
+    }
+
+    stopLondonStationDrawerPolling() {
+        if (this._londonStationDrawerTimer) {
+            clearInterval(this._londonStationDrawerTimer);
+            this._londonStationDrawerTimer = null;
+        }
+    }
+
+    async refreshLondonStationDrawerData(selection) {
+        const me = this;
+        const resolvedSelection = me.getLondonStationSelection(selection);
+
+        if (!resolvedSelection) {
+            me._londonStationDrawerData = null;
+            me.renderLondonStationDrawer();
+            return;
+        }
+
+        const requestId = ++me._londonStationDrawerRequestId;
+        const existing = me._londonStationDrawerData || {};
+        me._londonStationDrawerData = {
+            selectionId: resolvedSelection.id,
+            loading: true,
+            departures: existing.selectionId === resolvedSelection.id ? (existing.departures || []) : [],
+            updatedAt: existing.selectionId === resolvedSelection.id ? existing.updatedAt : null,
+            capacity: me.getLondonStationCapacity(resolvedSelection)
+        };
+        me.renderLondonStationDrawer();
+
+        const stopPointIds = me.getLondonStationStopPointIds(resolvedSelection);
+        const results = await Promise.allSettled(stopPointIds.map(id => me.fetchTfLJson(`/StopPoint/${id}/Arrivals`)));
+
+        if (requestId !== me._londonStationDrawerRequestId) {
+            return;
+        }
+
+        const arrivals = [];
+        for (const result of results) {
+            if (result.status === 'fulfilled' && Array.isArray(result.value)) {
+                arrivals.push(...result.value);
+            }
+        }
+
+        me._londonStationDrawerData = {
+            selectionId: resolvedSelection.id,
+            loading: false,
+            departures: me.normalizeLondonStationDepartureRecords(arrivals),
+            updatedAt: Date.now(),
+            capacity: me.getLondonStationCapacity(resolvedSelection)
+        };
+        me.renderLondonStationDrawer();
+    }
+
+    startLondonStationDrawerPolling(selection, { pollMs = null } = {}) {
+        const me = this;
+        const resolvedSelection = me.getLondonStationSelection(selection);
+
+        me.stopLondonStationDrawerPolling();
+        if (!resolvedSelection) {
+            return;
+        }
+        me.refreshLondonStationDrawerData(resolvedSelection);
+        me._londonStationDrawerTimer = setInterval(() => {
+            if (isStation(me.trackedObject)) {
+                me.refreshLondonStationDrawerData(resolvedSelection);
+            }
+        }, pollMs || me._londonStationDrawerPollMs);
+    }
+
     getLondonStationDepartures(selection) {
         const me = this;
+        const drawerData = me._londonStationDrawerData;
+
+        if (drawerData && drawerData.selectionId === (selection && selection.id) && Array.isArray(drawerData.departures)) {
+            return drawerData.departures.slice();
+        }
+
         const now = me.clock.getTime();
         const baseGroup = getLondonGroupBase(selection && selection.id);
         const departures = [];
@@ -2716,8 +2919,10 @@ export default class extends Evented {
     getLondonStationCapacity(selection) {
         return {
             title: 'Platform capacity',
-            status: 'Unavailable',
-            detail: `Live platform capacity is not mapped for ${escapeHTML(this.getLocalizedStationTitle(selection && selection.stations ? selection.stations[0] : [])) || 'this station'} in the current build.`
+            status: 'No data',
+            tone: 'unknown',
+            percent: 0,
+            detail: `No live crowding data is available for ${this.getLocalizedStationTitle(selection && selection.stations ? selection.stations[0] : []) || 'this station'} right now.`
         };
     }
 
@@ -2785,6 +2990,8 @@ export default class extends Evented {
             modal
         };
 
+        me.initLondonTheme();
+
         me._londonSearchPanelOpen = typeof window !== 'undefined' ?
             !window.matchMedia('(max-width: 960px)').matches :
             true;
@@ -2831,6 +3038,7 @@ export default class extends Evented {
         const minorCount = records.filter(record => getLondonStatusTone(record.statusText) === 'minor').length;
         const statusTone = severeCount ? 'severe' : minorCount ? 'minor' : 'good';
         const statusLabel = severeCount ? `${severeCount} severe` : minorCount ? `${minorCount} updates` : 'Good service';
+        const isDark = me._londonTheme === 'dark';
 
         ui.topbar.innerHTML = [
             '<div class="london-brand">',
@@ -2841,6 +3049,10 @@ export default class extends Evented {
             '</div>',
             '</div>',
             '<div class="london-topbar-actions">',
+            `<button type="button" class="london-topbar-button london-theme-toggle" aria-pressed="${isDark}" title="Toggle ${isDark ? 'light' : 'dark'} mode">`,
+            `<span class="london-theme-toggle-icon" aria-hidden="true">${isDark ? '☾' : '☀'}</span>`,
+            `<span class="london-theme-toggle-label">${isDark ? 'Dark' : 'Light'}</span>`,
+            '</button>',
             `<button type="button" class="london-topbar-button london-search-toggle${me._londonSearchPanelOpen ? ' active' : ''}" aria-expanded="${me._londonSearchPanelOpen}">Search &amp; Filter</button>`,
             `<button type="button" class="london-topbar-button london-status-trigger ${statusTone}">`,
             `<span class="london-status-dot ${statusTone}" aria-hidden="true"></span>`,
@@ -2852,6 +3064,9 @@ export default class extends Evented {
             '</div>'
         ].join('');
 
+        ui.topbar.querySelector('.london-theme-toggle').addEventListener('click', () => {
+            me.toggleLondonTheme();
+        });
         ui.topbar.querySelector('.london-search-toggle').addEventListener('click', () => {
             me.toggleLondonSearchPanel();
         });
@@ -3125,14 +3340,21 @@ export default class extends Evented {
 
         const title = me.getLocalizedStationTitle(selection.stations[0]);
         const stationStatuses = me.getLondonStationStatusRecords(selection);
+        const drawerData = me._londonStationDrawerData && me._londonStationDrawerData.selectionId === selection.id
+            ? me._londonStationDrawerData
+            : null;
         const departures = me.getLondonStationDepartures(selection);
         const departuresByDirection = new Map();
-        const capacity = me.getLondonStationCapacity(selection);
-        const updatedLabel = new Intl.DateTimeFormat(me.lang, {
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit'
-        }).format(new Date());
+        const capacity = drawerData && drawerData.capacity ? drawerData.capacity : me.getLondonStationCapacity(selection);
+        const updatedLabel = formatLondonUpdatedTime(
+            drawerData && drawerData.updatedAt ? drawerData.updatedAt : me._londonLineStatusUpdatedAt,
+            me.lang
+        );
+        const disruptedStatuses = stationStatuses.filter(record => getLondonStatusTone(record.statusText) !== 'good');
+        const loadingDepartures = !!(drawerData && drawerData.loading);
+        const hasLiveDepartureData = departures.length > 0;
+        const departureGroups = [];
+        const stationMapLabel = `Center ${title}`;
 
         for (const departure of departures) {
             if (!departuresByDirection.has(departure.directionLabel)) {
@@ -3140,15 +3362,15 @@ export default class extends Evented {
             }
             departuresByDirection.get(departure.directionLabel).push(departure);
         }
+        for (const [label, items] of departuresByDirection.entries()) {
+            departureGroups.push({ label, items });
+        }
 
         ui.drawer.innerHTML = [
-            '<div class="london-card-header">',
+            '<div class="london-station-drawer-scroll">',
+            '<div class="london-card-header london-station-header">',
             '<div>',
-            '<div class="london-card-eyebrow">Station detail</div>',
             `<h2>${escapeHTML(title)}</h2>`,
-            '</div>',
-            '<button type="button" class="london-panel-close" aria-label="Close station details">×</button>',
-            '</div>',
             '<div class="london-station-line-strip">',
             stationStatuses.map(record => `<span style="background-color:${escapeHTML(record.color)};"></span>`).join(''),
             '</div>',
@@ -3159,56 +3381,65 @@ export default class extends Evented {
                 '</span>'
             ].join('')).join(''),
             '</div>',
-            '<div class="london-drawer-body">',
-            stationStatuses.length ? [
-                '<section class="london-drawer-section">',
-                '<h3>Service updates</h3>',
-                '<div class="london-station-status-list">',
-                stationStatuses.map(record => [
-                    `<div class="london-station-status ${getLondonStatusTone(record.statusText)}">`,
-                    `<span class="status-line" style="background-color:${escapeHTML(record.color)};"></span>`,
-                    '<div>',
-                    `<strong>${escapeHTML(record.title)}</strong>`,
-                    `<p>${escapeHTML(record.statusText)}${record.reason ? ` • ${escapeHTML(record.reason)}` : ''}</p>`,
-                    '</div>',
-                    '</div>'
-                ].join('')).join(''),
-                '</div>',
-                '</section>'
-            ].join('') : '',
-            '<section class="london-drawer-section">',
-            `<h3>${escapeHTML(capacity.title)}</h3>`,
-            '<div class="london-capacity-card">',
-            `<strong>${escapeHTML(capacity.status)}</strong>`,
-            `<p>${capacity.detail}</p>`,
             '</div>',
-            '</section>',
+            '<button type="button" class="london-panel-close" aria-label="Close station details">×</button>',
+            '</div>',
+            '<div class="london-drawer-body">',
             '<section class="london-drawer-section">',
-            '<h3>Live departures</h3>',
-            departuresByDirection.size ? Array.from(departuresByDirection.entries()).map(([label, items]) => [
-                '<div class="london-departure-group">',
-                `<div class="london-departure-heading">${escapeHTML(label)}</div>`,
-                '<div class="london-departure-list">',
-                items.map(item => [
-                    '<div class="london-departure-row">',
-                    '<div class="london-departure-main">',
-                    `<span class="london-line-dot" style="background-color:${escapeHTML(item.color)};"></span>`,
-                    '<div>',
-                    `<strong>${escapeHTML(item.destination)}</strong>`,
-                    `<span>${escapeHTML(item.lineTitle)} • ${escapeHTML(item.platformName)}</span>`,
-                    '</div>',
-                    '</div>',
-                    `<span class="london-departure-time">${escapeHTML(item.etaLabel)}</span>`,
-                    '</div>'
-                ].join('')).join(''),
+            (disruptedStatuses.length ? disruptedStatuses.map(record => [
+                `<div class="london-status-alert ${getLondonStatusTone(record.statusText)}">`,
+                '<div class="london-status-alert-icon" aria-hidden="true">!</div>',
+                '<div class="london-status-alert-copy">',
+                `<strong>${escapeHTML(record.statusText)}</strong>`,
+                `<p>${escapeHTML(record.title)}${record.reason ? `: ${escapeHTML(record.reason)}` : ''}</p>`,
                 '</div>',
                 '</div>'
-            ].join('')).join('') : '<div class="london-empty-state">No live departures are available for this station right now.</div>',
+            ].join('')).join('') : [
+                '<div class="london-status-alert good">',
+                '<div class="london-status-alert-icon" aria-hidden="true">✓</div>',
+                '<div class="london-status-alert-copy">',
+                '<strong>Good service</strong>',
+                '<p>No service alerts are currently reported for the lines serving this station.</p>',
+                '</div>',
+                '</div>'
+            ].join('')),
+            '</section>',
+            '<section class="london-drawer-section">',
+            '<div class="london-section-heading-row">',
+            `<h3>${escapeHTML(capacity.title)}</h3>`,
+            `<span class="london-capacity-badge ${escapeHTML(String(capacity.tone || 'unknown'))}">${escapeHTML(capacity.status)}</span>`,
+            '</div>',
+            '<div class="london-crowding-meter">',
+            `<span class="london-crowding-fill ${escapeHTML(String(capacity.tone || 'unknown'))}" style="width:${escapeHTML(String(capacity.percent || 0))}%;"></span>`,
+            '</div>',
+            `<p class="london-capacity-copy">${escapeHTML(capacity.detail)}</p>`,
+            '</section>',
+            '<div class="london-section-divider"></div>',
+            '<section class="london-drawer-section">',
+            (loadingDepartures ? '<div class="london-empty-state">Loading live departures…</div>' :
+                hasLiveDepartureData ? departureGroups.map(group => [
+                    '<div class="london-direction-section">',
+                    `<div class="london-departure-heading">${escapeHTML(group.label)}</div>`,
+                    '<div class="london-departure-list">',
+                    group.items.map(item => [
+                        '<div class="london-departure-card">',
+                        '<div class="london-departure-card-main">',
+                        `<strong>${escapeHTML(item.destination)}</strong>`,
+                        `<span>${escapeHTML(item.platformName)}</span>`,
+                        '</div>',
+                        `<span class="london-departure-time">${escapeHTML(item.etaLabel)}</span>`,
+                        '</div>'
+                    ].join('')).join(''),
+                    '</div>',
+                    '</div>'
+                ].join('')).join('') :
+                '<div class="london-empty-state">No live arrival data is available for this station right now.</div>'),
             '</section>',
             '</div>',
+            '</div>',
             '<div class="london-drawer-footer">',
+            `<button type="button" class="london-primary-button london-center-station">${escapeHTML(stationMapLabel)}</button>`,
             `<span>Last updated ${escapeHTML(updatedLabel)}</span>`,
-            '<button type="button" class="london-secondary-button london-center-station">Center on station</button>',
             '</div>'
         ].join('');
 
@@ -5413,6 +5644,10 @@ export default class extends Evented {
     }
 
     refreshRealtimeTrainData() {
+        if (this.city === 'london' && this.useLondonLiveTrains) {
+            return;
+        }
+
         if (!configs.tidUrl) {
             return;
         }
@@ -6058,6 +6293,10 @@ export default class extends Evented {
                 }
             } else {
                 me.addStationOutline(object, 'stations-marked');
+                map.getCanvas().style.cursor = 'pointer';
+                if (me.getCityFromLocation() === 'london') {
+                    return;
+                }
             }
 
             map.getCanvas().style.cursor = 'pointer';
@@ -6134,6 +6373,10 @@ export default class extends Evented {
                 me.fire({ type: 'deselection', deselection: trackedObject.stations.map(({ id }) => id) });
                 me._setSearchMode('none');
                 me.hideStationExits();
+                if (me.getCityFromLocation() === 'london') {
+                    me.stopLondonStationDrawerPolling();
+                    me._londonStationDrawerData = null;
+                }
             } else {
                 me.fire(Object.assign({ type: 'deselection' }, trackedObject));
             }
@@ -6215,8 +6458,12 @@ export default class extends Evented {
                         },
                         reset: () => {
                             me.renderLondonStationDrawer();
+                        },
+                        updateContent: () => {
+                            me.renderLondonStationDrawer();
                         }
                     };
+                    me.startLondonStationDrawerPolling(object);
                     me.renderLondonStationDrawer();
                 } else {
                     me.detailPanel = new StationPanel({ object: stations });
@@ -6383,6 +6630,13 @@ export default class extends Evented {
             { markedObject, map, popup } = me,
             { setHTML, addToMap } = options || {};
 
+        if (isStation(markedObject) && me.getCityFromLocation() === 'london') {
+            if (popup && popup.isOpen()) {
+                popup.remove();
+            }
+            return;
+        }
+
         if (isVehicle(markedObject)) {
             const bearing = markedObject === me.trackedObject ? map.getBearing() : undefined;
 
@@ -6508,6 +6762,23 @@ export default class extends Evented {
     addStationOutline(object, name) {
         const me = this,
             id = object.stations[0].id;
+
+        if (me.getCityFromLocation() === 'london') {
+            const baseGeo = me._londonRailGeoBase;
+            const group = getLondonGroupBase(object.id || object.group || object.stations[0].group || id);
+            const data = baseGeo
+                ? helpersGeojson.featureFilter(baseGeo, p => p.type === 'station' && getLondonGroupBase(p.group || p.id) === group)
+                : buildFeatureCollection([]);
+
+            for (const zoom of [13, 14, 15, 16, 17, 18]) {
+                helpersMapbox.setLayerProps(me.map, `${name}-${zoom}`, {
+                    data,
+                    opacity: 1,
+                    visible: true
+                });
+            }
+            return;
+        }
 
         for (const zoom of [13, 14, 15, 16, 17, 18]) {
             helpersMapbox.setLayerProps(me.map, `${name}-${zoom}`, {
