@@ -6,6 +6,16 @@ This project is a fork of [Mini Tokyo 3D](https://github.com/nagix/mini-tokyo-3d
 
 See local London demo via `http://localhost:3000/?city=london`.
 
+## Current London UI
+
+The London build now includes a London-specific control shell on top of the existing map rendering and train animation systems.
+
+- `Line Status` overlay for network-wide service updates
+- `Search & Filter` panel for station lookup and line filtering
+- station detail drawer on normal click/tap
+- light/dark theme toggle in the header
+- graceful no-data states when TfL arrivals or crowding data are unavailable
+
 ## About Data
 
 Primary sources used in this fork:
@@ -47,13 +57,20 @@ window.MT3D_CONFIG = {
 Build and run London:
 
 ```bash
-npm run build:london
-npm run serve
+npm start
 ```
 
 Then open:
 
 `http://localhost:3000/?city=london`
+
+`npm start` rebuilds the London app and serves the local demo in one command.
+
+If you already built once and only want to serve the generated output again:
+
+```bash
+npm run serve
+```
 
 ## Optional Environment Variables (for data scripts)
 
@@ -71,6 +88,12 @@ export TFL_APP_KEY=your_tfl_app_key
 export TFL_APP_ID=your_tfl_app_id
 npm run build-data:london
 ```
+
+## Notes
+
+- London defaults to the English UI unless `?lang=` is explicitly provided.
+- The page metadata is set to English for the London build to avoid browser auto-translate prompts.
+- TfL live arrivals can occasionally return empty data; when that happens the station drawer will explicitly show that live arrivals or crowding data are unavailable instead of using fake placeholder data.
 
 ## License
 
