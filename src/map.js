@@ -58,6 +58,84 @@ const LONDON_VISUAL_LINE_SMOOTH_SUBDIVISIONS = 4;
 
 const DEGREE_TO_RADIAN = Math.PI / 180;
 
+function escapeHTML(value) {
+    return String(value || '').replace(/[&<>"']/g, s => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        '\'': '&#39;'
+    })[s]);
+}
+
+function getLondonGroupBase(group) {
+    return String(group || '').replace(/\.(ug|og)$/, '');
+}
+
+function getLondonLineKey(value) {
+    return String(value || '').toLowerCase().replace(/^tfl\./, '').split('.')[0];
+}
+
+function getLondonStatusTone(statusText) {
+    const text = String(statusText || '').toLowerCase();
+
+    if (!text || text.includes('unavailable') || text.includes('unknown')) {
+        return 'unknown';
+    }
+    if (text.includes('good')) {
+        return 'good';
+    }
+    if (text.includes('minor') || text.includes('part closure') || text.includes('planned closure')) {
+        return 'minor';
+    }
+    if (text.includes('severe') || text.includes('suspend') || text.includes('closed') || text.includes('closure')) {
+        return 'severe';
+    }
+    return 'unknown';
+}
+
+function getLondonStatusPriority(record) {
+    const status = record && record.statusText;
+    const tone = getLondonStatusTone(status);
+
+    if (tone === 'severe') {
+        return 3;
+    }
+    if (tone === 'minor') {
+        return 2;
+    }
+    if (tone === 'unknown') {
+        return 1;
+    }
+    return 0;
+}
+
+function formatLondonCountdown(ms) {
+    if (!Number.isFinite(ms)) {
+        return 'Live';
+    }
+    if (ms < 45000) {
+        return 'Due';
+    }
+    return `${Math.max(1, Math.round(ms / 60000))} min`;
+}
+
+function getLondonDirectionLabel(label, destinationName) {
+    const clean = String(label || '').replace(/\s*\((inbound|outbound)\)\s*$/i, '').trim();
+
+    if (!clean || /^(inbound|outbound)$/i.test(clean)) {
+        return destinationName ? `Towards ${destinationName}` : 'Service';
+    }
+    return clean;
+}
+
+function buildFeatureCollection(features) {
+    return {
+        type: 'FeatureCollection',
+        features
+    };
+}
+
 // Replace NavigationControl._updateZoomButtons to support disabling the control
 const _updateZoomButtons = NavigationControl.prototype._updateZoomButtons;
 NavigationControl.prototype._updateZoomButtons = function () {
@@ -121,6 +199,10 @@ export default class extends Evented {
         const qs = typeof location !== 'undefined' ? new URLSearchParams(location.search) : null;
         const city = (qs && qs.get('city')) || configs.city;
         me.city = city;
+        if (city === 'london') {
+            options.searchControl = false;
+            options.configControl = false;
+        }
         const defaultCenter = configs.defaultCenter;
         let hasCustomCenter = false;
         if (Array.isArray(options.center) && Array.isArray(defaultCenter)) {
@@ -192,6 +274,11 @@ export default class extends Evented {
         me.lastDynamicUpdate = {};
         me.lastRepaint = 0;
         me.frameRateFactor = 1;
+        me._londonLineFilters = new Set();
+        me._londonStatusFilters = new Set();
+        me._londonLineStatusLookup = new Map();
+        me._londonLineStatusPollMs = 60000;
+        me._londonLiveTrainPollMs = 10000;
 
         // The inner map container overrides the option
         options.container = initContainer(me.container);
@@ -632,7 +719,9 @@ export default class extends Evented {
             station = me.stations.get(selection);
 
         if (station) {
-            me.trackObject(me.stationGroupLookup.get(station.group));
+            me.trackObject(me.getCityFromLocation() === 'london' ?
+                me.getLondonStationSelection(station.group) :
+                me.stationGroupLookup.get(station.group));
             delete me.initialSelection;
         } else if (!selection.match(/NRT|HND/)) {
             if (me.trainLoaded) {
@@ -905,6 +994,34 @@ export default class extends Evented {
             }
         }
 
+        if (me.city === 'london') {
+            const londonStationSelectionLookup = me.londonStationSelectionLookup = new Map();
+
+            for (const station of me.stations.getAll()) {
+                if (!station) continue;
+
+                const baseGroup = getLondonGroupBase(station.group || station.id);
+                let entry = londonStationSelectionLookup.get(baseGroup);
+
+                if (!entry) {
+                    entry = {
+                        id: baseGroup,
+                        type: 'station',
+                        stations: [],
+                        hidden: []
+                    };
+                    londonStationSelectionLookup.set(baseGroup, entry);
+                }
+                if (!entry.stations.includes(station)) {
+                    entry.stations.push(station);
+                }
+            }
+
+            for (const entry of londonStationSelectionLookup.values()) {
+                entry.layer = entry.stations.some(station => station.altitude >= 0) ? 'ground' : 'underground';
+            }
+        }
+
         me.trainTypes = new Dataset(TrainType, data.trainTypeData);
         me.trainVehicleTypes = new Dataset(TrainVehicleType, data.trainVehicleData);
 
@@ -976,6 +1093,8 @@ export default class extends Evented {
         const hasLondonRoutes = isLondon && me.featureCollection && (me.featureCollection.features || []).length > 0;
         const useLondonLiveTrains3d = isLondon && me.useLondonLiveTrains && me.useLondonLiveTrains3d;
         const enableTrafficLayer = !isLondon || (hasLondonRoutes && (!me.useLondonLiveTrains || useLondonLiveTrains3d));
+
+        container.classList.toggle('is-london', isLondon);
 
         // TrafficLayer (deck.gl compute/WebGL) requires full route/features datasets.
         // London mode uses a safe no-op stub unless features/timetables are available.
@@ -1117,10 +1236,12 @@ export default class extends Evented {
 
         // London: add a deck.gl rail line layer so 3D trains align with the line at pitch.
         if (isLondon && featureCollection && (featureCollection.features || []).length) {
-            const londonRailLineData = helpersGeojson.featureFilter(
-                me.buildLondonRailGeoJSON(),
+            me._londonRailGeoBase = me.buildLondonRailGeoJSON();
+            me._londonRailLineDataBase = helpersGeojson.featureFilter(
+                me._londonRailGeoBase,
                 p => p.type === 'railway'
             );
+            const londonRailLineData = me.getFilteredLondonRailLineGeoJSON();
 
             for (const zoom of [13, 14, 15, 16, 17, 18]) {
                 const lineWidthScale = getZoomProfileValue(initialZoom, LONDON_3D_RAIL_LINE_WIDTH_SCALE_PROFILE);
@@ -1151,7 +1272,12 @@ export default class extends Evented {
 
         // London fallback rendering (when features.json etc. are not generated)
         if (me.getCityFromLocation() === 'london') {
-            const londonGeo = me.buildLondonRailGeoJSON();
+            const londonGeoBase = me._londonRailGeoBase || me.buildLondonRailGeoJSON();
+            me._londonRailGeoBase = londonGeoBase;
+            if (!me._londonRailLineDataBase) {
+                me._londonRailLineDataBase = helpersGeojson.featureFilter(londonGeoBase, p => p.type === 'railway');
+            }
+            const londonGeo = me.getFilteredLondonRailGeoJSON() || londonGeoBase;
             const londonPaint = me.getLondonFallbackPaintExpressions();
             const ensureLondonFallbackLayers = () => {
                 me.ensureLondon3DBuildingsLayer();
@@ -1513,6 +1639,11 @@ export default class extends Evented {
             map.addControl(control);
         }
 
+        if (isLondon) {
+            me.initLondonUI();
+            me.startLondonLineStatusPolling({ pollMs: me._londonLineStatusPollMs });
+        }
+
         map.on('mousemove', e => {
             if (me.getCityFromLocation() === 'london') {
                 const hoverLayers = ['london-stations', 'london-station-pills', 'london-station-pills-outline']
@@ -1545,6 +1676,12 @@ export default class extends Evented {
                         layers: clickLayers
                     })[0];
                     if (stationClickHit) {
+                        const selection = me.getLondonStationSelection(stationClickHit.properties && stationClickHit.properties.group);
+
+                        if (selection) {
+                            me.markObject(selection);
+                            me.trackObject(selection);
+                        }
                         return;
                     }
                 }
@@ -1745,7 +1882,7 @@ export default class extends Evented {
             return fc;
         }
 
-        const groupBase = group => String(group || '').replace(/\.(ug|og)$/, '');
+        const groupBase = group => getLondonGroupBase(group);
         const stationTitle = st => (st && st.title && (st.title[me.lang] || st.title.en || st.title.ja)) || st.id;
         const railwayTitle = rw => (rw && rw.title && (rw.title[me.lang] || rw.title.en || rw.title.ja)) || rw.id;
         const londonLineTitles = {
@@ -1937,6 +2074,7 @@ export default class extends Evented {
                 color: (lines[0] && lines[0].color) || '#FFFFFF',
                 group: entry.group,
                 lineCount: lines.length,
+                lineIds: lines.map(line => line.lineId || line.railwayId).filter(Boolean),
                 shape: interchange ? 'pill' : 'dot'
             };
 
@@ -2010,7 +2148,7 @@ export default class extends Evented {
                 for (const edge of adjacency.get(current.node) || []) {
                     if (edge.segmentKey === skippedSegmentKey) continue;
                     const nextDistance = current.distance + edge.distance;
-                    if (nextDistance >= (distances.get(edge.node) ?? Infinity)) continue;
+                    if (nextDistance >= (distances.has(edge.node) ? distances.get(edge.node) : Infinity)) continue;
                     distances.set(edge.node, nextDistance);
                     queue.push({
                         node: edge.node,
@@ -2249,6 +2387,847 @@ export default class extends Evented {
         return results;
     }
 
+    getLondonLineCatalog() {
+        const me = this;
+
+        if (me._londonLineCatalog) {
+            return me._londonLineCatalog;
+        }
+
+        const lookup = new Map();
+        for (const railway of me.railways ? me.railways.getAll() : []) {
+            if (!railway) continue;
+
+            const lineId = getLondonLineKey(railway.lineId || railway.id);
+            if (!lineId) continue;
+
+            if (!lookup.has(lineId)) {
+                lookup.set(lineId, {
+                    lineId,
+                    title: me.getDisplayRailwayTitle(railway),
+                    color: railway.color || '#0098D4',
+                    railwayIds: []
+                });
+            }
+            lookup.get(lineId).railwayIds.push(railway.id);
+        }
+
+        me._londonLineCatalog = Array.from(lookup.values()).sort((a, b) => a.title.localeCompare(b.title));
+        return me._londonLineCatalog;
+    }
+
+    getLondonStationSelection(value) {
+        const me = this;
+        const selectionLookup = me.londonStationSelectionLookup;
+
+        if (!selectionLookup) {
+            return null;
+        }
+
+        if (value && value.type === 'station' && Array.isArray(value.stations)) {
+            const station = value.stations[0];
+            return selectionLookup.get(getLondonGroupBase((station && station.group) || value.id)) || value;
+        }
+        return selectionLookup.get(getLondonGroupBase(value && value.group ? value.group : value)) || null;
+    }
+
+    getFilteredLondonRailFeatures(features) {
+        const me = this;
+        const filters = me.getEffectiveLondonLineFilters();
+
+        if (!me.hasActiveLondonFilters()) {
+            return features.slice();
+        }
+
+        return features.filter(feature => {
+            const props = feature && feature.properties ? feature.properties : {};
+
+            if (props.type === 'railway') {
+                return filters.has(getLondonLineKey(props.lineId || props.railwayId));
+            }
+            if (props.type === 'station') {
+                const lineIds = Array.isArray(props.lineIds) ? props.lineIds : [];
+                return lineIds.some(lineId => filters.has(getLondonLineKey(lineId)));
+            }
+            return true;
+        });
+    }
+
+    getFilteredLondonRailGeoJSON() {
+        const me = this;
+        const base = me._londonRailGeoBase;
+
+        if (!base || !Array.isArray(base.features)) {
+            return null;
+        }
+        return buildFeatureCollection(me.getFilteredLondonRailFeatures(base.features));
+    }
+
+    getFilteredLondonRailLineGeoJSON() {
+        const me = this;
+        const base = me._londonRailLineDataBase;
+
+        if (!base || !Array.isArray(base.features)) {
+            return null;
+        }
+        return buildFeatureCollection(me.getFilteredLondonRailFeatures(base.features));
+    }
+
+    getEffectiveLondonLineFilters() {
+        const me = this;
+        const lineFilters = me._londonLineFilters || new Set();
+        const statusFilters = me._londonStatusFilters || new Set();
+        const lineCatalog = me.getLondonLineCatalog();
+
+        if (!statusFilters.size) {
+            return new Set(lineFilters);
+        }
+
+        const matchingByStatus = new Set();
+        for (const line of lineCatalog) {
+            const status = me.getLondonLineStatusRecord(line.lineId);
+            const tone = getLondonStatusTone(status && status.statusText);
+
+            if (statusFilters.has(tone)) {
+                matchingByStatus.add(line.lineId);
+            }
+        }
+
+        if (!lineFilters.size) {
+            return matchingByStatus;
+        }
+
+        return new Set(Array.from(lineFilters).filter(lineId => matchingByStatus.has(lineId)));
+    }
+
+    hasActiveLondonFilters() {
+        const me = this;
+
+        return !!((me._londonLineFilters && me._londonLineFilters.size) || (me._londonStatusFilters && me._londonStatusFilters.size));
+    }
+
+    applyLondonLineFilters({ restartLiveTrains = true } = {}) {
+        const me = this;
+        const { map } = me;
+
+        if (me.getCityFromLocation() !== 'london' || !map) {
+            return;
+        }
+
+        const filteredGeo = me.getFilteredLondonRailGeoJSON();
+        if (filteredGeo && map.getSource('london-rail')) {
+            map.getSource('london-rail').setData(filteredGeo);
+        }
+
+        const filtered3d = me.getFilteredLondonRailLineGeoJSON();
+        if (filtered3d) {
+            const lineWidthScale = getZoomProfileValue(map.getZoom(), LONDON_3D_RAIL_LINE_WIDTH_SCALE_PROFILE);
+
+            for (let z = 13; z <= 18; z++) {
+                const layerId = `london-railways-3d-${z}`;
+                if (map.getLayer(layerId)) {
+                    helpersMapbox.setLayerProps(map, layerId, {
+                        data: filtered3d,
+                        lineWidthScale
+                    });
+                }
+            }
+        }
+
+        if (restartLiveTrains && me.useLondonLiveTrains && me.useLondonLiveTrains3d) {
+            const lineIds = Array.from(me.getEffectiveLondonLineFilters());
+            const hasActiveFilters = me.hasActiveLondonFilters();
+
+            if (me._londonLiveTrafficTrains && me.trafficLayer && me.trafficLayer.removeObject) {
+                for (const [key, train] of me._londonLiveTrafficTrains.entries()) {
+                    if (hasActiveFilters && train && !lineIds.includes(train._londonLineId)) {
+                        me.trafficLayer.removeObject(train);
+                        me._londonLiveTrafficTrains.delete(key);
+                    }
+                }
+            }
+
+            if (hasActiveFilters && !lineIds.length) {
+                clearInterval(me._londonLiveTrainsTimer);
+                me._londonLiveTrainsTimer = null;
+            } else {
+                me.startLondonLiveTrains({
+                    lineId: lineIds.length ? lineIds : null,
+                    pollMs: me._londonLiveTrainPollMs
+                });
+            }
+        }
+
+        me.renderLondonSearchPanel();
+        me.renderLondonShell();
+    }
+
+    normalizeLondonLineStatuses(data) {
+        const me = this;
+        const lookup = new Map();
+
+        for (const line of me.getLondonLineCatalog()) {
+            lookup.set(line.lineId, {
+                lineId: line.lineId,
+                title: line.title,
+                color: line.color,
+                statusText: 'Status unavailable',
+                reason: 'Live status is unavailable for this line right now.',
+                modeName: 'tube'
+            });
+        }
+
+        for (const item of data || []) {
+            const lineId = getLondonLineKey(item && item.id);
+            if (!lookup.has(lineId)) continue;
+
+            const statuses = Array.isArray(item.lineStatuses) ? item.lineStatuses : [];
+            const normalized = statuses.map(status => ({
+                statusText: status.statusSeverityDescription || 'Status unavailable',
+                reason: status.reason || (status.disruption && status.disruption.description) || '',
+                severity: status.statusSeverity,
+                validUntil: status.validityPeriods && status.validityPeriods[0] && status.validityPeriods[0].toDate
+            })).sort((a, b) => getLondonStatusPriority(b) - getLondonStatusPriority(a));
+            const primary = normalized[0] || {};
+            const current = lookup.get(lineId);
+
+            lookup.set(lineId, {
+                lineId,
+                title: item.name || current.title,
+                color: current.color,
+                statusText: primary.statusText || current.statusText,
+                reason: primary.reason || '',
+                severity: primary.severity,
+                validUntil: primary.validUntil,
+                modeName: item.modeName || current.modeName
+            });
+        }
+
+        return lookup;
+    }
+
+    getLondonLineStatusRecord(lineId) {
+        const me = this;
+        const key = getLondonLineKey(lineId);
+
+        return (me._londonLineStatusLookup && me._londonLineStatusLookup.get(key)) || null;
+    }
+
+    async refreshLondonLineStatuses() {
+        const me = this;
+
+        try {
+            const data = await me.fetchTfLJson('/Line/Mode/tube,overground,dlr,elizabeth-line/Status');
+
+            me._londonLineStatusLookup = me.normalizeLondonLineStatuses(data);
+            me._londonLineStatusError = null;
+            me._londonLineStatusUpdatedAt = Date.now();
+        } catch (error) {
+            me._londonLineStatusError = error;
+        }
+
+        me.renderLondonShell();
+        me.renderLondonSearchPanel();
+        me.renderLondonStatusModal();
+        me.renderLondonStationDrawer();
+    }
+
+    startLondonLineStatusPolling({ pollMs = 60000 } = {}) {
+        const me = this;
+
+        clearInterval(me._londonLineStatusTimer);
+        me._londonLineStatusPollMs = pollMs;
+        me.refreshLondonLineStatuses();
+        me._londonLineStatusTimer = setInterval(() => {
+            me.refreshLondonLineStatuses();
+        }, pollMs);
+    }
+
+    getLondonStationDepartures(selection) {
+        const me = this;
+        const now = me.clock.getTime();
+        const baseGroup = getLondonGroupBase(selection && selection.id);
+        const departures = [];
+
+        for (const train of (me._londonLiveTrafficTrains || new Map()).values()) {
+            if (!train || !train.liveTfL || !train.r) continue;
+
+            const arrivalGroup = train.arrivalStation ? getLondonGroupBase(train.arrivalStation.group || train.arrivalStation.id) : '';
+            const departureGroup = train.departureStation ? getLondonGroupBase(train.departureStation.group || train.departureStation.id) : '';
+
+            if (arrivalGroup !== baseGroup && !(departureGroup === baseGroup && train.standing)) {
+                continue;
+            }
+
+            const lineId = getLondonLineKey(train.r.lineId || train.r.id);
+            const directionLabel = getLondonDirectionLabel(
+                train.d ? me.getLocalizedRailDirectionTitle(train.d) : '',
+                train.destinationName
+            );
+            const etaMs = Number.isFinite(train._tflNextTime)
+                ? Math.max(0, train._tflNextTime - now)
+                : Number.isFinite(train.timeToStation)
+                    ? Math.max(0, train.timeToStation * 1000)
+                    : NaN;
+
+            departures.push({
+                id: train.id,
+                lineId,
+                color: train.r.color || '#0098D4',
+                lineTitle: me.getDisplayRailwayTitle(train.r),
+                destination: train.destinationName || (train.ds ? me.getLocalizedStationTitle(train.ds) : 'Destination unavailable'),
+                directionLabel,
+                etaMs,
+                etaLabel: formatLondonCountdown(etaMs),
+                platformName: train.platformName || 'Platform unavailable',
+                sortKey: Number.isFinite(etaMs) ? etaMs : Infinity
+            });
+        }
+
+        departures.sort((a, b) => a.sortKey - b.sortKey || a.destination.localeCompare(b.destination));
+        return departures.slice(0, 12);
+    }
+
+    getLondonStationStatusRecords(selection) {
+        const me = this;
+        const seen = new Set();
+        const records = [];
+
+        for (const station of (selection && selection.stations) || []) {
+            const lineId = getLondonLineKey(station && station.railway && (station.railway.lineId || station.railway.id));
+            if (!lineId || seen.has(lineId)) continue;
+            seen.add(lineId);
+
+            const line = me.getLondonLineCatalog().find(entry => entry.lineId === lineId);
+            const status = me.getLondonLineStatusRecord(lineId) || {};
+
+            records.push({
+                lineId,
+                title: (line && line.title) || me.getDisplayRailwayTitle(station.railway),
+                color: (line && line.color) || station.railway.color || '#0098D4',
+                statusText: status.statusText || 'Status unavailable',
+                reason: status.reason || ''
+            });
+        }
+
+        return records.sort((a, b) => getLondonStatusPriority(b) - getLondonStatusPriority(a) || a.title.localeCompare(b.title));
+    }
+
+    getLondonStationCapacity(selection) {
+        return {
+            title: 'Platform capacity',
+            status: 'Unavailable',
+            detail: `Live platform capacity is not mapped for ${escapeHTML(this.getLocalizedStationTitle(selection && selection.stations ? selection.stations[0] : [])) || 'this station'} in the current build.`
+        };
+    }
+
+    getLondonStationSearchResults(query) {
+        const me = this;
+        const normalizedQuery = me.normalizeLondonStationKey(query);
+
+        if (!normalizedQuery || !me.londonStationSelectionLookup) {
+            return [];
+        }
+
+        return Array.from(me.londonStationSelectionLookup.values()).map(selection => {
+            const title = me.getLocalizedStationTitle(selection.stations[0]);
+            const lines = me.getLondonStationStatusRecords(selection);
+
+            return {
+                selection,
+                title,
+                searchKey: me.normalizeLondonStationKey(title),
+                lines
+            };
+        }).filter(entry => entry.searchKey.includes(normalizedQuery)).sort((a, b) => {
+            const aStarts = entryStartsWith(a, normalizedQuery);
+            const bStarts = entryStartsWith(b, normalizedQuery);
+
+            if (aStarts !== bStarts) {
+                return aStarts ? -1 : 1;
+            }
+            return a.title.localeCompare(b.title);
+        }).slice(0, 8);
+
+        function entryStartsWith(entry, value) {
+            return entry.searchKey.startsWith(value);
+        }
+    }
+
+    initLondonUI() {
+        const me = this;
+
+        if (me.getCityFromLocation() !== 'london' || me._londonUI) {
+            return;
+        }
+
+        const root = helpers.createElement('div', {
+            className: 'london-ui'
+        }, me.container);
+        const topbar = helpers.createElement('div', {
+            className: 'london-topbar'
+        }, root);
+        const searchPanel = helpers.createElement('aside', {
+            className: 'london-search-panel'
+        }, root);
+        const drawer = helpers.createElement('aside', {
+            className: 'london-station-drawer'
+        }, root);
+        const modal = helpers.createElement('div', {
+            className: 'london-status-modal'
+        }, root);
+
+        me._londonUI = {
+            root,
+            topbar,
+            searchPanel,
+            drawer,
+            modal
+        };
+
+        me._londonSearchPanelOpen = typeof window !== 'undefined' ?
+            !window.matchMedia('(max-width: 960px)').matches :
+            true;
+
+        me._londonHandleKeyDown = event => {
+            if (event.key !== 'Escape') {
+                return;
+            }
+            if (me._londonStatusModalOpen) {
+                me.closeLondonStatusModal();
+                return;
+            }
+            if (isStation(me.trackedObject)) {
+                me.trackObject();
+                return;
+            }
+            if (me._londonSearchPanelOpen) {
+                me.toggleLondonSearchPanel(false);
+            }
+        };
+        document.addEventListener('keydown', me._londonHandleKeyDown);
+
+        me.renderLondonShell();
+        me.renderLondonSearchPanel();
+        me.renderLondonStatusModal();
+        me.renderLondonStationDrawer();
+    }
+
+    renderLondonShell() {
+        const me = this;
+        const ui = me._londonUI;
+
+        if (!ui) {
+            return;
+        }
+
+        const records = me.getLondonLineCatalog().map(line => me.getLondonLineStatusRecord(line.lineId) || {
+            lineId: line.lineId,
+            title: line.title,
+            color: line.color,
+            statusText: 'Status unavailable'
+        });
+        const severeCount = records.filter(record => getLondonStatusTone(record.statusText) === 'severe').length;
+        const minorCount = records.filter(record => getLondonStatusTone(record.statusText) === 'minor').length;
+        const statusTone = severeCount ? 'severe' : minorCount ? 'minor' : 'good';
+        const statusLabel = severeCount ? `${severeCount} severe` : minorCount ? `${minorCount} updates` : 'Good service';
+
+        ui.topbar.innerHTML = [
+            '<div class="london-brand">',
+            '<div class="london-roundel" aria-hidden="true"><span></span></div>',
+            '<div class="london-brand-copy">',
+            '<div class="london-brand-title">Mini London 3D</div>',
+            '<div class="london-brand-subtitle">Live network map</div>',
+            '</div>',
+            '</div>',
+            '<div class="london-topbar-actions">',
+            `<button type="button" class="london-topbar-button london-search-toggle${me._londonSearchPanelOpen ? ' active' : ''}" aria-expanded="${me._londonSearchPanelOpen}">Search &amp; Filter</button>`,
+            `<button type="button" class="london-topbar-button london-status-trigger ${statusTone}">`,
+            `<span class="london-status-dot ${statusTone}" aria-hidden="true"></span>`,
+            '<span class="london-status-copy">',
+            '<span class="london-status-label">Line Status</span>',
+            `<span class="london-status-meta">${escapeHTML(statusLabel)}</span>`,
+            '</span>',
+            '</button>',
+            '</div>'
+        ].join('');
+
+        ui.topbar.querySelector('.london-search-toggle').addEventListener('click', () => {
+            me.toggleLondonSearchPanel();
+        });
+        ui.topbar.querySelector('.london-status-trigger').addEventListener('click', () => {
+            me.openLondonStatusModal();
+        });
+    }
+
+    toggleLondonSearchPanel(force) {
+        const me = this;
+        const next = typeof force === 'boolean' ? force : !me._londonSearchPanelOpen;
+
+        me._londonSearchPanelOpen = next;
+        me.renderLondonShell();
+        me.renderLondonSearchPanel();
+    }
+
+    renderLondonSearchPanel() {
+        const me = this;
+        const ui = me._londonUI;
+
+        if (!ui) {
+            return;
+        }
+
+        ui.searchPanel.classList.toggle('open', !!me._londonSearchPanelOpen);
+
+        const query = me._londonSearchQuery || '';
+        const results = me.getLondonStationSearchResults(query);
+        const explicitLineFilters = me._londonLineFilters || new Set();
+        const statusFilters = me._londonStatusFilters || new Set();
+        const effectiveFilters = me.getEffectiveLondonLineFilters();
+        const hasAnyLineFilter = explicitLineFilters.size || statusFilters.size;
+        const lines = me.getLondonLineCatalog().map(line => {
+            const status = me.getLondonLineStatusRecord(line.lineId) || {};
+            const active = !hasAnyLineFilter || effectiveFilters.has(line.lineId);
+            const tone = getLondonStatusTone(status.statusText);
+
+            return Object.assign({}, line, {
+                active,
+                tone,
+                statusText: status.statusText || 'Status unavailable'
+            });
+        });
+
+        ui.searchPanel.innerHTML = [
+            '<div class="london-card-header">',
+            '<div>',
+            '<div class="london-card-eyebrow">Utility</div>',
+            '<h2>Search &amp; Filter</h2>',
+            '</div>',
+            '<button type="button" class="london-panel-close" aria-label="Close search panel">×</button>',
+            '</div>',
+            '<label class="london-search-field">',
+            '<span class="london-search-icon" aria-hidden="true">⌕</span>',
+            `<input id="london-search-input" type="text" value="${escapeHTML(query)}" placeholder="Find a station" autocomplete="off">`,
+            '</label>',
+            results.length ? [
+                '<div class="london-search-results">',
+                results.map(result => [
+                    `<button type="button" class="london-search-result" data-station-group="${escapeHTML(result.selection.id)}">`,
+                    `<span class="result-title">${escapeHTML(result.title)}</span>`,
+                    `<span class="result-lines">${escapeHTML(result.lines.map(line => line.title).slice(0, 3).join(' • ') || 'Station')}</span>`,
+                    '</button>'
+                ].join('')).join(''),
+                '</div>'
+            ].join('') : `<div class="london-search-empty">${query ? 'No stations match this search.' : 'Type a station name to jump and open live details.'}</div>`,
+            '<div class="london-filter-section">',
+            '<div class="london-filter-header">',
+            '<span>Service state</span>',
+            '</div>',
+            '<div class="london-chip-row">',
+            ['severe', 'minor', 'good'].map(tone => [
+                `<button type="button" class="london-filter-chip${statusFilters.has(tone) ? ' active' : ''}" data-status-filter="${tone}">`,
+                tone.charAt(0).toUpperCase() + tone.slice(1),
+                '</button>'
+            ].join('')).join(''),
+            '</div>',
+            '</div>',
+            '<div class="london-filter-section">',
+            '<div class="london-filter-header">',
+            '<span>Lines</span>',
+            '<button type="button" class="london-filter-reset">Reset</button>',
+            '</div>',
+            '<div class="london-line-list">',
+            lines.map(line => [
+                `<button type="button" class="london-line-option${line.active ? ' active' : ''}" data-line-filter="${escapeHTML(line.lineId)}">`,
+                `<span class="london-line-swatch" style="background-color:${escapeHTML(line.color)};"></span>`,
+                '<span class="london-line-copy">',
+                `<span class="line-title">${escapeHTML(line.title)}</span>`,
+                `<span class="line-status ${line.tone}">${escapeHTML(line.statusText)}</span>`,
+                '</span>',
+                '</button>'
+            ].join('')).join(''),
+            '</div>',
+            '</div>'
+        ].join('');
+
+        ui.searchPanel.querySelector('.london-panel-close').addEventListener('click', () => {
+            me.toggleLondonSearchPanel(false);
+        });
+
+        const input = ui.searchPanel.querySelector('#london-search-input');
+        input.addEventListener('input', event => {
+            me._londonSearchQuery = event.target.value;
+            me.renderLondonSearchPanel();
+        });
+        input.addEventListener('keydown', event => {
+            if (event.key !== 'Enter') {
+                return;
+            }
+            const exactStation = me.stationTitleLookup && me.stationTitleLookup.get(String(event.target.value || '').toUpperCase());
+            const selection = exactStation ? me.getLondonStationSelection(exactStation.group) : (results[0] && results[0].selection);
+
+            if (selection) {
+                me.markObject(selection);
+                me.trackObject(selection);
+                if (typeof window !== 'undefined' && window.matchMedia('(max-width: 960px)').matches) {
+                    me.toggleLondonSearchPanel(false);
+                }
+            }
+        });
+
+        for (const button of ui.searchPanel.querySelectorAll('[data-station-group]')) {
+            button.addEventListener('click', () => {
+                const selection = me.getLondonStationSelection(button.dataset.stationGroup);
+
+                if (selection) {
+                    me.markObject(selection);
+                    me.trackObject(selection);
+                    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 960px)').matches) {
+                        me.toggleLondonSearchPanel(false);
+                    }
+                }
+            });
+        }
+
+        for (const button of ui.searchPanel.querySelectorAll('[data-line-filter]')) {
+            button.addEventListener('click', () => {
+                const lineId = button.dataset.lineFilter;
+
+                if (explicitLineFilters.has(lineId)) {
+                    explicitLineFilters.delete(lineId);
+                } else {
+                    explicitLineFilters.add(lineId);
+                }
+                me.applyLondonLineFilters();
+            });
+        }
+
+        for (const button of ui.searchPanel.querySelectorAll('[data-status-filter]')) {
+            button.addEventListener('click', () => {
+                const tone = button.dataset.statusFilter;
+
+                if (statusFilters.has(tone)) {
+                    statusFilters.delete(tone);
+                } else {
+                    statusFilters.add(tone);
+                }
+                me.applyLondonLineFilters();
+            });
+        }
+
+        ui.searchPanel.querySelector('.london-filter-reset').addEventListener('click', () => {
+            explicitLineFilters.clear();
+            statusFilters.clear();
+            me.applyLondonLineFilters();
+        });
+    }
+
+    openLondonStatusModal() {
+        const me = this;
+
+        me._londonStatusModalOpen = true;
+        me.renderLondonStatusModal();
+    }
+
+    closeLondonStatusModal() {
+        const me = this;
+
+        me._londonStatusModalOpen = false;
+        me.renderLondonStatusModal();
+    }
+
+    renderLondonStatusModal() {
+        const me = this;
+        const ui = me._londonUI;
+
+        if (!ui) {
+            return;
+        }
+
+        const records = me.getLondonLineCatalog().map(line => {
+            const status = me.getLondonLineStatusRecord(line.lineId) || {};
+
+            return {
+                lineId: line.lineId,
+                title: line.title,
+                color: line.color,
+                statusText: status.statusText || 'Status unavailable',
+                reason: status.reason || ''
+            };
+        }).sort((a, b) => getLondonStatusPriority(b) - getLondonStatusPriority(a) || a.title.localeCompare(b.title));
+        const severeRecords = records.filter(record => getLondonStatusTone(record.statusText) === 'severe');
+        const updatedLabel = me._londonLineStatusUpdatedAt
+            ? new Intl.DateTimeFormat(me.lang, {
+                hour: '2-digit',
+                minute: '2-digit'
+            }).format(new Date(me._londonLineStatusUpdatedAt))
+            : 'Waiting for live data';
+
+        ui.modal.classList.toggle('open', !!me._londonStatusModalOpen);
+        ui.modal.innerHTML = me._londonStatusModalOpen ? [
+            '<div class="london-status-modal-backdrop"></div>',
+            '<div class="london-status-dialog" role="dialog" aria-modal="true" aria-labelledby="london-status-title">',
+            '<div class="london-card-header london-status-header">',
+            '<div>',
+            '<div class="london-card-eyebrow">Network-wide</div>',
+            '<h2 id="london-status-title">Line Status</h2>',
+            `<p>Live updates • ${escapeHTML(updatedLabel)}</p>`,
+            '</div>',
+            '<button type="button" class="london-panel-close" aria-label="Close line status">×</button>',
+            '</div>',
+            severeRecords.length ? [
+                '<div class="london-severe-summary">',
+                '<strong>Severe delays</strong>',
+                `<span>${escapeHTML(severeRecords.map(record => record.title).join(' • '))}</span>`,
+                '</div>'
+            ].join('') : '',
+            '<div class="london-status-grid">',
+            records.map(record => [
+                `<div class="london-status-card ${getLondonStatusTone(record.statusText)}">`,
+                `<span class="london-status-line" style="background-color:${escapeHTML(record.color)};"></span>`,
+                '<div class="london-status-card-copy">',
+                `<strong>${escapeHTML(record.title)}</strong>`,
+                `<span class="status-text ${getLondonStatusTone(record.statusText)}">${escapeHTML(record.statusText)}</span>`,
+                record.reason ? `<span class="status-reason">${escapeHTML(record.reason)}</span>` : '',
+                '</div>',
+                '</div>'
+            ].join('')).join(''),
+            '</div>',
+            '</div>'
+        ].join('') : '';
+
+        if (!me._londonStatusModalOpen) {
+            return;
+        }
+
+        ui.modal.querySelector('.london-status-modal-backdrop').addEventListener('click', () => {
+            me.closeLondonStatusModal();
+        });
+        ui.modal.querySelector('.london-panel-close').addEventListener('click', () => {
+            me.closeLondonStatusModal();
+        });
+    }
+
+    renderLondonStationDrawer() {
+        const me = this;
+        const ui = me._londonUI;
+        const selection = isStation(me.trackedObject) ? me.getLondonStationSelection(me.trackedObject) : null;
+
+        if (!ui) {
+            return;
+        }
+
+        ui.drawer.classList.toggle('open', !!selection);
+        if (!selection) {
+            ui.drawer.innerHTML = '';
+            return;
+        }
+
+        const title = me.getLocalizedStationTitle(selection.stations[0]);
+        const stationStatuses = me.getLondonStationStatusRecords(selection);
+        const departures = me.getLondonStationDepartures(selection);
+        const departuresByDirection = new Map();
+        const capacity = me.getLondonStationCapacity(selection);
+        const updatedLabel = new Intl.DateTimeFormat(me.lang, {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        }).format(new Date());
+
+        for (const departure of departures) {
+            if (!departuresByDirection.has(departure.directionLabel)) {
+                departuresByDirection.set(departure.directionLabel, []);
+            }
+            departuresByDirection.get(departure.directionLabel).push(departure);
+        }
+
+        ui.drawer.innerHTML = [
+            '<div class="london-card-header">',
+            '<div>',
+            '<div class="london-card-eyebrow">Station detail</div>',
+            `<h2>${escapeHTML(title)}</h2>`,
+            '</div>',
+            '<button type="button" class="london-panel-close" aria-label="Close station details">×</button>',
+            '</div>',
+            '<div class="london-station-line-strip">',
+            stationStatuses.map(record => `<span style="background-color:${escapeHTML(record.color)};"></span>`).join(''),
+            '</div>',
+            '<div class="london-line-pill-row">',
+            stationStatuses.map(record => [
+                `<span class="london-line-pill" style="--line-color:${escapeHTML(record.color)};">`,
+                escapeHTML(record.title),
+                '</span>'
+            ].join('')).join(''),
+            '</div>',
+            '<div class="london-drawer-body">',
+            stationStatuses.length ? [
+                '<section class="london-drawer-section">',
+                '<h3>Service updates</h3>',
+                '<div class="london-station-status-list">',
+                stationStatuses.map(record => [
+                    `<div class="london-station-status ${getLondonStatusTone(record.statusText)}">`,
+                    `<span class="status-line" style="background-color:${escapeHTML(record.color)};"></span>`,
+                    '<div>',
+                    `<strong>${escapeHTML(record.title)}</strong>`,
+                    `<p>${escapeHTML(record.statusText)}${record.reason ? ` • ${escapeHTML(record.reason)}` : ''}</p>`,
+                    '</div>',
+                    '</div>'
+                ].join('')).join(''),
+                '</div>',
+                '</section>'
+            ].join('') : '',
+            '<section class="london-drawer-section">',
+            `<h3>${escapeHTML(capacity.title)}</h3>`,
+            '<div class="london-capacity-card">',
+            `<strong>${escapeHTML(capacity.status)}</strong>`,
+            `<p>${capacity.detail}</p>`,
+            '</div>',
+            '</section>',
+            '<section class="london-drawer-section">',
+            '<h3>Live departures</h3>',
+            departuresByDirection.size ? Array.from(departuresByDirection.entries()).map(([label, items]) => [
+                '<div class="london-departure-group">',
+                `<div class="london-departure-heading">${escapeHTML(label)}</div>`,
+                '<div class="london-departure-list">',
+                items.map(item => [
+                    '<div class="london-departure-row">',
+                    '<div class="london-departure-main">',
+                    `<span class="london-line-dot" style="background-color:${escapeHTML(item.color)};"></span>`,
+                    '<div>',
+                    `<strong>${escapeHTML(item.destination)}</strong>`,
+                    `<span>${escapeHTML(item.lineTitle)} • ${escapeHTML(item.platformName)}</span>`,
+                    '</div>',
+                    '</div>',
+                    `<span class="london-departure-time">${escapeHTML(item.etaLabel)}</span>`,
+                    '</div>'
+                ].join('')).join(''),
+                '</div>',
+                '</div>'
+            ].join('')).join('') : '<div class="london-empty-state">No live departures are available for this station right now.</div>',
+            '</section>',
+            '</div>',
+            '<div class="london-drawer-footer">',
+            `<span>Last updated ${escapeHTML(updatedLabel)}</span>`,
+            '<button type="button" class="london-secondary-button london-center-station">Center on station</button>',
+            '</div>'
+        ].join('');
+
+        ui.drawer.querySelector('.london-panel-close').addEventListener('click', () => {
+            me.trackObject();
+        });
+        ui.drawer.querySelector('.london-center-station').addEventListener('click', () => {
+            const coords = selection.stations.map(station => station.coord).filter(Boolean);
+
+            if (coords.length) {
+                me.map.flyTo({
+                    center: helpersMapbox.getBounds(coords).getCenter(),
+                    zoom: 16,
+                    pitch: me.map.getPitch()
+                });
+            }
+        });
+    }
+
     getLondonStationIndexLookup(railway) {
         const me = this;
         if (!railway) return null;
@@ -2373,7 +3352,8 @@ export default class extends Evented {
                 naptanId,
                 timeToStation: tts,
                 currentLocation,
-                expectedArrival
+                expectedArrival,
+                platformName: a.platformName || ''
             });
         }
 
@@ -2422,7 +3402,8 @@ export default class extends Evented {
                         stationIndex: index,
                         timeToStation: a.timeToStation,
                         stationName: a.stationName,
-                        expectedArrival: a.expectedArrival
+                        expectedArrival: a.expectedArrival,
+                        platformName: a.platformName || ''
                     });
                 }
                 if (predictions.length) {
@@ -2733,9 +3714,11 @@ export default class extends Evented {
             train.destinationName = t.dest;
             train.timeToStation = next.timeToStation;
             train.currentLocation = t.currentLocation;
+            train.platformName = next.platformName || '';
             train._tflPrevTime = isFinite(prevEpoch) ? prevEpoch : undefined;
             train._tflNextTime = isFinite(nextEpoch) ? nextEpoch : undefined;
             train.d = sectionLength >= 0 ? railway.ascending : railway.descending;
+            train._londonLineId = getLondonLineKey(railway.lineId || railway.id);
 
             if (train.instanceID === undefined) {
                 me.trafficLayer.addObject(train);
@@ -2790,6 +3773,10 @@ export default class extends Evented {
                 me.trafficLayer.removeObject(train);
                 me._londonLiveTrafficTrains.delete(key);
             }
+        }
+
+        if (isStation(me.trackedObject)) {
+            me.renderLondonStationDrawer();
         }
     }
 
@@ -2924,6 +3911,7 @@ export default class extends Evented {
      */
     startLondonLiveTrains({ lineId = null, pollMs = 10000 } = {}) {
         const me = this;
+        me._londonLiveTrainPollMs = pollMs;
 
         if (me._londonLiveTrainsTimer) {
             clearInterval(me._londonLiveTrainsTimer);
@@ -2971,7 +3959,7 @@ export default class extends Evented {
                     station: st,
                     lng: st.coord[0],
                     lat: st.coord[1],
-                    color: st.railway?.color
+                    color: st.railway ? st.railway.color : undefined
                 };
                 addStationLookup(norm, info);
                 if (norm) stationNameKeys.add(norm);
@@ -5097,6 +6085,10 @@ export default class extends Evented {
         const me = this,
             { searchMode, lang, map, trackedObject, trafficLayer, lastCameraParams, sharePanel, detailPanel } = me;
 
+        if (me.getCityFromLocation() === 'london' && isStation(object)) {
+            object = me.getLondonStationSelection(object) || object;
+        }
+
         if (searchMode === 'edit' && detailPanel && isStation(object)) {
             const { title, utitle } = object.stations[0],
                 stationTitle = (utitle && utitle[lang]) || helpers.normalize(title[lang] || title.en);
@@ -5216,8 +6208,20 @@ export default class extends Evented {
                 }
                 map.flyTo({ center, zoom: 15.5 });
 
-                me.detailPanel = new StationPanel({ object: stations });
-                me.detailPanel.addTo(me);
+                if (me.getCityFromLocation() === 'london') {
+                    me.detailPanel = {
+                        remove: () => {
+                            me.renderLondonStationDrawer();
+                        },
+                        reset: () => {
+                            me.renderLondonStationDrawer();
+                        }
+                    };
+                    me.renderLondonStationDrawer();
+                } else {
+                    me.detailPanel = new StationPanel({ object: stations });
+                    me.detailPanel.addTo(me);
+                }
 
                 me.addStationOutline(object, 'stations-selected');
                 me.fire({ type: 'selection', selection: object.stations.map(({ id }) => id) });
