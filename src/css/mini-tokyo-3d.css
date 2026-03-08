@@ -1471,7 +1471,7 @@
     visibility: hidden;
     transform: translateX(24px);
     transition: opacity .2s ease, transform .2s ease, visibility .2s ease;
-    overflow: auto;
+    overflow: hidden;
 }
 .mini-tokyo-3d.is-london .london-station-drawer.open {
     opacity: 1;
@@ -1535,7 +1535,6 @@
 .mini-tokyo-3d.is-london .london-search-results,
 .mini-tokyo-3d.is-london .london-line-list,
 .mini-tokyo-3d.is-london .london-status-grid,
-.mini-tokyo-3d.is-london .london-drawer-body,
 .mini-tokyo-3d.is-london .london-station-status-list,
 .mini-tokyo-3d.is-london .london-departure-list {
     display: flex;
@@ -1799,11 +1798,24 @@
 .mini-tokyo-3d.is-london .london-station-header {
     align-items: flex-start;
 }
-.mini-tokyo-3d.is-london .london-station-drawer-scroll {
+.mini-tokyo-3d.is-london .london-station-drawer-inner {
     display: flex;
     flex-direction: column;
     gap: 18px;
     min-height: 0;
+    height: 100%;
+}
+.mini-tokyo-3d.is-london .london-station-drawer-body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding-right: 4px;
+    margin-right: -4px;
+    padding-bottom: 8px;
+    scrollbar-gutter: stable;
 }
 .mini-tokyo-3d.is-london .london-section-heading-row {
     display: flex;
@@ -1919,6 +1931,25 @@
     flex-direction: column;
     gap: 10px;
 }
+.mini-tokyo-3d.is-london .london-line-departure-group {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.mini-tokyo-3d.is-london .london-line-departure-header {
+    display: flex;
+    align-items: center;
+}
+.mini-tokyo-3d.is-london .london-line-group-pill {
+    gap: 8px;
+}
+.mini-tokyo-3d.is-london .london-line-group-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    flex: none;
+}
 .mini-tokyo-3d.is-london .london-departure-heading {
     text-transform: uppercase;
     letter-spacing: 0.12em;
@@ -1965,9 +1996,14 @@
     padding-top: 4px;
     flex-direction: column;
     align-items: stretch;
+    flex: none;
+    border-top: 1px solid var(--london-border);
+    padding-top: 14px;
 }
-.mini-tokyo-3d.is-london .london-drawer-footer span {
+.mini-tokyo-3d.is-london .london-drawer-footer-meta {
     align-self: center;
+    color: var(--london-muted);
+    font-size: 12px;
 }
 .mini-tokyo-3d.is-london .london-empty-state {
     padding: 14px;
