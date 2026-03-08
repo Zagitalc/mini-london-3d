@@ -13,6 +13,8 @@ The London build now includes a London-specific control shell on top of the exis
 - `Line Status` overlay for network-wide service updates
 - `Search & Filter` panel for station lookup and line filtering
 - station detail drawer on normal click/tap
+- station arrivals grouped by `line -> direction`
+- sticky station drawer footer with `Center <station>` action and update time
 - light/dark theme toggle in the header
 - graceful no-data states when TfL arrivals or crowding data are unavailable
 
@@ -93,6 +95,7 @@ npm run build-data:london
 
 - London defaults to the English UI unless `?lang=` is explicitly provided.
 - The page metadata is set to English for the London build to avoid browser auto-translate prompts.
+- London live-train placement is hardened against invalid route segments and invalid coordinate reads. Trains that cannot be placed safely for a poll cycle are skipped and retried on the next live update instead of being left frozen on the map.
 - TfL live arrivals can occasionally return empty data; when that happens the station drawer will explicitly show that live arrivals or crowding data are unavailable instead of using fake placeholder data.
 
 ## License

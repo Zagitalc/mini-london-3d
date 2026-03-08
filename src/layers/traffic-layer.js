@@ -337,7 +337,12 @@ export default class {
             let minDist2 = 16 * 16;
             for (const object of me.objects.values()) {
                 if (!object || object.type !== 'train') continue;
-                const pos = me.computeRenderer.getInstancePosition(object.instanceID);
+                let pos;
+                try {
+                    pos = me.computeRenderer.getInstancePosition(object.instanceID);
+                } catch {
+                    continue;
+                }
                 if (!pos || !pos.coord) continue;
                 const p = me.project(pos.coord, pos.altitude);
                 const dx = p.x - point.x;
