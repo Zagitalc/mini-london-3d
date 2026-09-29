@@ -15,7 +15,7 @@ Use the following Pages project settings:
 Cloudflare installs project dependencies before invoking the build command. Use this build command in the Pages dashboard:
 
 ```bash
-npm run build:london && node -e "const fs=require('node:fs'); const token=process.env.MAPBOX_ACCESS_TOKEN; if (!token) throw new Error('Missing MAPBOX_ACCESS_TOKEN'); fs.writeFileSync('build/config.local.js', 'window.MT3D_CONFIG = ' + JSON.stringify({accessToken: token, city: 'london'}) + ';\n');"
+npm run build:london && node -e "const fs=require('node:fs'); const token=process.env.MAPBOX_ACCESS_TOKEN; if (!token) throw new Error('Missing MAPBOX_ACCESS_TOKEN'); fs.writeFileSync('build/config.local.js', 'window.MT3D_CONFIG = ' + JSON.stringify({accessToken: token, city: 'london', tflProxyBase: '/tfl'}) + ';\n');"
 ```
 
 Do not add `npm ci` to that command unless automatic dependency installation is deliberately disabled with `SKIP_DEPENDENCY_INSTALL=1`.
@@ -48,7 +48,19 @@ Potential historical exposure was detected; affected commits and remediation ste
 
 A public preview may use the application's unauthenticated direct TfL requests only after external credential revocation. Live trains and service data remain best-effort: rejected, rate-limited, blocked and unavailable responses must retain visible graceful states. Do not describe this mode as reliable production live data.
 
-Before treating live data as production-reliable, add a same-origin Pages Function or Worker proxy. Store the rotated TfL credential as a server-side Cloudflare secret, allowlist the exact required TfL paths and HTTP methods, inject the credential server-side, and reject arbitrary upstream URLs so the endpoint cannot become an open proxy. Expose only the proxy base URL through the existing `tflProxyBase` option.
+### Same-origin TfL proxy
+
+The repository includes a Pages Function at `functions/tfl/[[path]].js`. Cloudflare Pages picks up the `functions/` directory at the project root automatically; it is not part of `build/`.
+
+- It serves `GET`/`HEAD` on `/tfl/<path>` and refuses every other method.
+- Only these upstream paths are allowed (see `src/helpers/tfl-proxy.mjs`): `/Line/Mode/{modes}/Status` for tube, overground, dlr and elizabeth-line; `/Line/{lineId}/Arrivals`; `/StopPoint/{id}/Arrivals`; `/crowding/{naptan}/Live`. Anything else returns 404, so it is not an open proxy.
+- Client query strings are dropped. The key is added server-side from the Pages secret `TFL_APP_KEY`.
+- Upstream error bodies are not forwarded, because TfL can echo the request URI (key included) in them.
+- Successful responses are edge-cached for 15 to 60 seconds depending on the path.
+
+To enable it, add the rotated key as an encrypted Pages variable (Settings → Variables and Secrets → `TFL_APP_KEY`, type Secret) for both production and preview, then deploy with the build command above, which writes `tflProxyBase: '/tfl'` into `config.local.js`. The browser tries the proxy first and falls back to anonymous direct TfL requests if the proxy fails.
+
+Without `TFL_APP_KEY` the function still works, but calls TfL anonymously and shares its rate limit across all visitors.
 
 ### Build acceptance
 
@@ -97,7 +109,7 @@ Do not create a public preview until all of the following are true:
 
 - the compromised TfL credential has been revoked through the authorised account interface, or preview remains blocked;
 - the exact Pages preview origin is included in the public Mapbox token's URL restrictions;
-- the generated runtime configuration contains only the restricted Mapbox token and `city: "london"`, plus an approved `tflProxyBase` only when a proxy exists;
+- the generated runtime configuration contains only the restricted Mapbox token and `city: "london"`, plus `tflProxyBase: "/tfl"`;
 - direct navigation, static assets and graceful TfL unavailable states have been tested;
 - browser-facing output contains no credential or local runtime configuration;
 - the preview is labelled best-effort and is not presented as production-reliable live service.

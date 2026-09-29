@@ -68,6 +68,12 @@
           tflAppKey: cfg.tflAppKey || cfg.tflKey || cfg.tfl_key,
         };
       }
+      if (cfg.tflProxyBase) {
+        // Same-origin proxy (functions/tfl) that holds the TfL key server-side.
+        options.secrets = Object.assign({}, options.secrets, {
+          tflProxyBase: cfg.tflProxyBase,
+        });
+      }
 
       if (matchLang) {
         options.lang = decodeURIComponent(matchLang[1]);
