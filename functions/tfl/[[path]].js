@@ -38,7 +38,7 @@ export async function onRequest({request, env}) {
 
     let upstream;
     try {
-        upstream = await fetch(buildTflUpstreamUrl(route.path, env.TFL_APP_KEY), {
+        upstream = await fetch(buildTflUpstreamUrl(route.path, env.TFL_APP_KEY, route.query), {
             headers: {Accept: 'application/json'},
             // Cache successes only, so a 429 or 5xx is not replayed to other visitors.
             cf: {cacheEverything: true, cacheTtlByStatus: {'200-299': route.ttl, '300-599': -1}}

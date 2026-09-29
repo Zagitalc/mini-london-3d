@@ -1839,6 +1839,47 @@
 .mini-tokyo-3d.is-london .london-status-grid {
     gap: 10px;
 }
+.mini-tokyo-3d.is-london .london-status-view {
+    margin-top: 12px;
+    padding: 3px;
+    display: inline-flex;
+    gap: 2px;
+    border: 1px solid var(--london-border);
+    border-radius: 999px;
+    background: var(--london-card-bg);
+}
+.mini-tokyo-3d.is-london .london-status-view button {
+    min-height: 32px;
+    padding: 0 14px;
+    border: 0;
+    border-radius: 999px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--london-muted);
+    background: transparent;
+    cursor: pointer;
+}
+.mini-tokyo-3d.is-london .london-status-view button[aria-pressed="true"] {
+    color: var(--london-blue);
+    background: rgba(17, 59, 146, 0.12);
+}
+.mini-tokyo-3d.is-london .london-closure-summary {
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    border: 1px solid var(--london-border);
+    border-radius: 16px;
+    background: var(--london-card-bg);
+    color: var(--london-muted);
+}
+.mini-tokyo-3d.is-london .london-closure-summary strong {
+    color: var(--london-text);
+}
+.mini-tokyo-3d.is-london .london-closure-unplaced {
+    font-style: italic;
+}
 .mini-tokyo-3d.is-london .london-status-card {
     display: flex;
     align-items: stretch;
