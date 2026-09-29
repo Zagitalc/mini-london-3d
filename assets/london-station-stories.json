@@ -1,0 +1,94 @@
+{
+    "stations": {
+        "940GZZLUBST": {
+            "name": "Baker Street",
+            "stories": [
+                {
+                    "text": "Platforms 5 and 6, now used by the Circle and Hammersmith & City lines, opened on 10 January 1863 with the Metropolitan Railway, the world's first underground railway. Restoration in the 1980s brought them back to something close to their 1863 appearance.",
+                    "source": {"title": "Wikipedia: Baker Street tube station", "url": "https://en.wikipedia.org/wiki/Baker_Street_tube_station"},
+                    "checked": "2026-09-29"
+                }
+            ]
+        },
+        "940GZZLUSGT": {
+            "name": "Southgate",
+            "stories": [
+                {
+                    "text": "Charles Holden's circular station opened in 1933. Its flat concrete roof seems to rest on nothing but a band of windows; in fact it is held up, umbrella-fashion, by a single column in the ticket hall. The building is listed at Grade II*.",
+                    "source": {"title": "Wikipedia: Southgate tube station", "url": "https://en.wikipedia.org/wiki/Southgate_tube_station"},
+                    "checked": "2026-09-29"
+                }
+            ]
+        },
+        "940GZZLUHTD": {
+            "name": "Hampstead",
+            "stories": [
+                {
+                    "text": "Because it sits on a steep hill, Hampstead has the deepest platforms on the Underground, 58.5 metres below ground. Heath Street was proposed as its name before it opened in 1907, and the original tiled signs on the platform walls still say Heath Street.",
+                    "source": {"title": "Wikipedia: Hampstead tube station", "url": "https://en.wikipedia.org/wiki/Hampstead_tube_station"},
+                    "checked": "2026-09-29"
+                }
+            ]
+        },
+        "940GZZLUAGL": {
+            "name": "Angel",
+            "stories": [
+                {
+                    "text": "Angel's escalators are the longest on the Underground and in the UK: 61 metres long, with a vertical rise of 27 metres. They came with the 1989–92 rebuild, which replaced a 3.7-metre-wide island platform that served trains in both directions.",
+                    "source": {"title": "Wikipedia: Angel tube station", "url": "https://en.wikipedia.org/wiki/Angel_tube_station"},
+                    "checked": "2026-09-29"
+                }
+            ]
+        },
+        "940GZZLUCYF": {
+            "name": "Canary Wharf",
+            "stories": [
+                {
+                    "text": "Norman Foster's station was built in a drained arm of the old dock, inside a pit 24 metres deep and 265 metres long. It opened in 1999, and more than 40 million people now pass through each year, making it the busiest Underground station served by only one line.",
+                    "source": {"title": "Wikipedia: Canary Wharf tube station", "url": "https://en.wikipedia.org/wiki/Canary_Wharf_tube_station"},
+                    "checked": "2026-09-29"
+                }
+            ]
+        },
+        "940GZZLUGTH": {
+            "name": "Gants Hill",
+            "stories": [
+                {
+                    "text": "The vaulted concourse follows a 1935 report on the Moscow Metro by the Underground's engineers. The tunnels were largely built by 1940, but the station did not open until 1947: in the war it was an air raid shelter, and the tunnels to Redbridge became a Plessey munitions factory.",
+                    "source": {"title": "Wikipedia: Gants Hill tube station", "url": "https://en.wikipedia.org/wiki/Gants_Hill_tube_station"},
+                    "checked": "2026-09-29"
+                }
+            ]
+        },
+        "940GZZLUGFD": {
+            "name": "Greenford",
+            "stories": [
+                {
+                    "text": "Greenford was the first Underground station with an escalator up to platforms above street level. Until 2014 it also had the last wooden-treaded escalator still in service on the Underground; the rest were converted or removed after the 1987 King's Cross fire.",
+                    "source": {"title": "Wikipedia: Greenford station", "url": "https://en.wikipedia.org/wiki/Greenford_station"},
+                    "checked": "2026-09-29"
+                }
+            ]
+        },
+        "940GZZLUASG": {
+            "name": "Arnos Grove",
+            "stories": [
+                {
+                    "text": "The drum-shaped ticket hall is often said to be modelled on Asplund's Stockholm City Library, but Holden's chief assistant, Charles Hutton, said it was based on a groundsman's lodge at Midhurst Sanatorium. The old ticket office in the middle now holds an exhibition.",
+                    "source": {"title": "Wikipedia: Arnos Grove tube station", "url": "https://en.wikipedia.org/wiki/Arnos_Grove_tube_station"},
+                    "checked": "2026-09-29"
+                }
+            ]
+        },
+        "940GZZLUWSM": {
+            "name": "Westminster",
+            "stories": [
+                {
+                    "text": "The station opened as Westminster Bridge on 24 December 1868, the eastern terminus of the steam-worked District Railway, and was renamed in 1907. The original station was entirely rebuilt alongside the Jubilee line platforms of 1999, with Portcullis House on top.",
+                    "source": {"title": "Wikipedia: Westminster tube station", "url": "https://en.wikipedia.org/wiki/Westminster_tube_station"},
+                    "checked": "2026-09-29"
+                }
+            ]
+        }
+    }
+}
