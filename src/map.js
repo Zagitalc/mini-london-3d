@@ -34,6 +34,7 @@ import { applyLondonStationGroups, shortenLondonStationName, stripLondonDirectio
 import { describeLondonCrowding, selectLondonCrowdingReading } from './helpers/london-crowding.mjs';
 import { buildTflRequestUrls } from './helpers/tfl-request.mjs';
 import { describeLondonStationFacilities } from './helpers/london-station-facilities.mjs';
+import { describeLondonStationStories } from './helpers/london-station-stories.mjs';
 import {
     LONDON_TUBE_LINE_IDS,
     extractLondonClosures,
@@ -2813,6 +2814,7 @@ export default class extends Evented {
         }
 
         me.loadLondonStationFacilities();
+        me.loadLondonStationStories();
         const requestId = ++me._londonStationDrawerRequestId;
         const existing = me._londonStationDrawerData || {};
         me._londonStationDrawerData = {
@@ -2989,6 +2991,32 @@ export default class extends Evented {
         for (const id of this.getLondonStationStopPointIds(selection)) {
             const facilities = describeLondonStationFacilities(stations[id]);
             if (facilities) return facilities;
+        }
+        return null;
+    }
+
+    loadLondonStationStories() {
+        const me = this;
+
+        // Hand-edited, sourced station facts; the drawer omits the section without them.
+        if (!me._londonStationStoriesPromise) {
+            me._londonStationStoriesPromise = helpers.loadJSON(`${me.dataUrl}/station-stories.json`)
+                .catch(() => null)
+                .then(data => {
+                    me._londonStationStories = data && data.stations ? data.stations : {};
+                    me.renderLondonStationDrawer();
+                });
+        }
+        return me._londonStationStoriesPromise;
+    }
+
+    getLondonStationStories(selection) {
+        const stations = this._londonStationStories;
+
+        if (!stations) return null;
+        for (const id of this.getLondonStationStopPointIds(selection)) {
+            const stories = describeLondonStationStories(stations[id]);
+            if (stories) return stories;
         }
         return null;
     }
@@ -3778,6 +3806,7 @@ export default class extends Evented {
         const departureGroups = me.getLondonStationDepartureGroups(selection);
         const capacity = drawerData && drawerData.capacity ? drawerData.capacity : me.getLondonStationCapacity(selection);
         const facilities = me.getLondonStationFacilities(selection);
+        const stories = me.getLondonStationStories(selection);
         const updatedLabel = formatLondonUpdatedTime(
             drawerData && drawerData.updatedAt ? drawerData.updatedAt : me._londonLineStatusUpdatedAt,
             me.lang
@@ -3873,6 +3902,19 @@ export default class extends Evented {
                     facilities.items.map(item => `<li>${escapeHTML(item.label)}${item.detail ? ` <span>${escapeHTML(item.detail)}</span>` : ''}</li>`).join(''),
                     '</ul>'
                 ].join('') : '<p class="london-capacity-copy">TfL lists no facilities for this station.</p>',
+                '</section>'
+            ].join('') : '',
+            stories ? [
+                '<section class="london-drawer-section">',
+                '<div class="london-section-heading-row"><h3>Station story</h3></div>',
+                stories.map(story => [
+                    '<figure class="london-station-story">',
+                    `<blockquote>${escapeHTML(story.text)}</blockquote>`,
+                    '<figcaption>Source: ',
+                    `<a href="${escapeHTML(story.sourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHTML(story.sourceTitle)}</a>`,
+                    '</figcaption>',
+                    '</figure>'
+                ].join('')).join(''),
                 '</section>'
             ].join('') : ''
         ].join('');
