@@ -76,7 +76,16 @@ export function flat(array) {
 }
 
 export function normalize(value) {
-    return value.normalize("NFD").replace(/\(.*\)|<.*>|〈.*〉|[\u0300-\u036F]/g, '');
+    // Strips bracketed annotations and combining marks from display titles.
+    // Repeats until stable so nested or overlapping brackets cannot leave a
+    // partial "<" or "(" behind.
+    let result = value.normalize("NFD"), previous;
+
+    do {
+        previous = result;
+        result = result.replace(/\([^()]*\)|<[^<>]*>|〈[^〈〉]*〉/g, '');
+    } while (result !== previous);
+    return result.replace(/[\u0300-\u036F]/g, '');
 }
 
 export function valueOrDefault(value, defaultValue) {
@@ -144,7 +153,8 @@ export function bindAll(fns, context) {
 
 export function removePrefix(value) {
     if (typeof value === 'string') {
-        return value.replace(/.*:/, '');
+        // Same as replace(/.*:/, '') for single-line IDs, without the quadratic regex.
+        return value.slice(value.lastIndexOf(':') + 1);
     }
     if (Array.isArray(value)) {
         return value.map(removePrefix);
