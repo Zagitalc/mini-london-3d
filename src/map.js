@@ -32,6 +32,7 @@ import { deriveRendererCommand, DWELL_MIN_MS, transitionTrainState } from './hel
 import { getLondonStationAnchor } from './helpers/london-geometry.mjs';
 import { applyLondonStationGroups } from './helpers/london-stations.mjs';
 import { describeLondonCrowding, selectLondonCrowdingReading } from './helpers/london-crowding.mjs';
+import { describeLondonStationFacilities } from './helpers/london-station-facilities.mjs';
 import { buildLondonTrainRouteFeature } from './helpers/london-train-route-geometry.mjs';
 import { GeoJsonLayer, ThreeLayer, Tile3DLayer, TrafficLayer } from './layers';
 import { loadBusData, loadDynamicBusData, loadDynamicFlightData, loadDynamicTrainData, loadStaticData, loadTimetableData, updateOdptUrl } from './loader';
@@ -2654,6 +2655,7 @@ export default class extends Evented {
             return;
         }
 
+        me.loadLondonStationFacilities();
         const requestId = ++me._londonStationDrawerRequestId;
         const existing = me._londonStationDrawerData || {};
         me._londonStationDrawerData = {
@@ -2806,6 +2808,32 @@ export default class extends Evented {
         const title = this.getLocalizedStationTitle(selection && selection.stations ? selection.stations[0] : []);
 
         return describeLondonCrowding(reading, title);
+    }
+
+    loadLondonStationFacilities() {
+        const me = this;
+
+        // Optional build-time snapshot; the drawer simply omits the section without it.
+        if (!me._londonStationFacilitiesPromise) {
+            me._londonStationFacilitiesPromise = helpers.loadJSON(`${me.dataUrl}/station-facilities.json.gz`)
+                .catch(() => null)
+                .then(data => {
+                    me._londonStationFacilities = data && data.stations ? data.stations : {};
+                    me.renderLondonStationDrawer();
+                });
+        }
+        return me._londonStationFacilitiesPromise;
+    }
+
+    getLondonStationFacilities(selection) {
+        const stations = this._londonStationFacilities;
+
+        if (!stations) return null;
+        for (const id of this.getLondonStationStopPointIds(selection)) {
+            const facilities = describeLondonStationFacilities(stations[id]);
+            if (facilities) return facilities;
+        }
+        return null;
     }
 
     async fetchLondonStationCrowding(stopPointIds) {
@@ -3523,6 +3551,7 @@ export default class extends Evented {
             : null;
         const departureGroups = me.getLondonStationDepartureGroups(selection);
         const capacity = drawerData && drawerData.capacity ? drawerData.capacity : me.getLondonStationCapacity(selection);
+        const facilities = me.getLondonStationFacilities(selection);
         const updatedLabel = formatLondonUpdatedTime(
             drawerData && drawerData.updatedAt ? drawerData.updatedAt : me._londonLineStatusUpdatedAt,
             me.lang
@@ -3576,6 +3605,19 @@ export default class extends Evented {
             '</div>',
             `<p class="london-capacity-copy">${escapeHTML(capacity.detail)}</p>`,
             '</section>',
+            facilities ? [
+                '<section class="london-drawer-section">',
+                '<div class="london-section-heading-row">',
+                '<h3>Facilities</h3>',
+                facilities.zone ? `<span class="london-capacity-badge">${escapeHTML(facilities.zone)}</span>` : '',
+                '</div>',
+                facilities.items.length ? [
+                    '<ul class="london-facility-list">',
+                    facilities.items.map(item => `<li>${escapeHTML(item.label)}${item.detail ? ` <span>${escapeHTML(item.detail)}</span>` : ''}</li>`).join(''),
+                    '</ul>'
+                ].join('') : '<p class="london-capacity-copy">TfL lists no facilities for this station.</p>',
+                '</section>'
+            ].join('') : '',
             '<div class="london-section-divider"></div>',
             '<section class="london-drawer-section london-departure-sections">',
             (loadingDepartures ? '<div class="london-empty-state">Loading live departures…</div>' :

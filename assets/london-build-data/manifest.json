@@ -18,6 +18,10 @@
       "sha256": "c144627f4ed7a3eb86c1fd9a21beb0c8eda092f3176286f3f5239f14c9481e66",
       "payloadSha256": "611f84235850715920ce4dbfef6261a5a9fc22e68fe62a1f0ef948aad7d0edb2"
     },
+    "station-facilities.json.gz": {
+      "sha256": "0d982f6920e4747bd24958ab34d8346d85ac44e25b77880421b4cb530ea94a3a",
+      "payloadSha256": "a4ad1f527a742e4f7b3b55a04fe185b1e7f5384e0f740b49e9e3356cb099388a"
+    },
     "station-groups.json.gz": {
       "sha256": "8f21c2de4ae4ecf47d5ef8f2530794821b85c5bfcdeaa3c585d74b3e4a4fb337",
       "payloadSha256": "3a0b2b67808003e378cc0d7c05c0882373d804c9b7868b92a172f132988e410f"
