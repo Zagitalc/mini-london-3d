@@ -69,6 +69,7 @@ test('the Pages Function injects the key, drops client queries and hides upstrea
     const ok = await onRequest({request: new Request('https://x.test/tfl/Line/victoria/Arrivals?app_key=evil&foo=1'), env});
     assert.equal(ok.status, 200);
     assert.equal(calls[0], 'https://api.tfl.gov.uk/Line/victoria/Arrivals?app_key=secret');
+    assert.equal(ok.headers.get('X-TfL-Proxy-Key'), 'set');
 
     const failed = await onRequest({request: new Request('https://x.test/tfl/crowding/940GZZLUBND/Live'), env});
     assert.equal(failed.status, 502);
@@ -80,4 +81,8 @@ test('the Pages Function injects the key, drops client queries and hides upstrea
     const post = await onRequest({request: new Request('https://x.test/tfl/Line/victoria/Arrivals', {method: 'POST'}), env});
     assert.equal(post.status, 405);
     assert.equal(calls.length, 2);
+
+    const keyless = await onRequest({request: new Request('https://x.test/tfl/Line/victoria/Arrivals'), env: {}});
+    assert.equal(keyless.headers.get('X-TfL-Proxy-Key'), 'missing');
+    assert.equal(calls[2], 'https://api.tfl.gov.uk/Line/victoria/Arrivals');
 });
