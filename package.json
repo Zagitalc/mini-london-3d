@@ -48,7 +48,7 @@
     "@rollup/plugin-node-resolve": "^16.0.0",
     "@rollup/plugin-replace": "^6.0.2",
     "@rollup/plugin-strip": "^3.0.4",
-    "@rollup/plugin-terser": "^0.4.4",
+    "@rollup/plugin-terser": "^1.0.0",
     "@rollup/pluginutils": "^5.2.0",
     "eslint": "^8.57.1",
     "eslint-config-mourner": "^3.0.0",
@@ -61,9 +61,7 @@
     "rollup": "^4.32.0",
     "rollup-plugin-postcss": "^4.0.2",
     "rollup-plugin-visualizer": "^5.14.0",
-    "serve": "^14.2.6",
-    "vuepress": "^1.9.10",
-    "vuepress-plugin-flexsearch": "^0.3.0"
+    "serve": "^14.2.6"
   },
   "scripts": {
     "start": "run-s build:london serve",
@@ -80,9 +78,7 @@
     "build:london": "run-s build build-pages build-data:london",
     "start:london": "run-s build:london serve",
     "test": "node --test tests/*.test.mjs",
-    "build-all": "run-s build build-pages build-data docs",
-    "docs": "vuepress build docs --no-cache",
-    "docs:dev": "vuepress dev docs --no-cache",
+    "build-all": "run-s build build-pages build-data",
     "lint": "eslint --cache --ignore-path .gitignore src"
   },
   "files": [
