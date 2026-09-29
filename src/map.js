@@ -30,8 +30,9 @@ import { matchObservationsToTrainStates } from './helpers/london-live-train-iden
 import { normalizeTfLObservations } from './helpers/london-live-train-observations.mjs';
 import { deriveRendererCommand, DWELL_MIN_MS, transitionTrainState } from './helpers/london-live-train-state.mjs';
 import { getLondonStationAnchor } from './helpers/london-geometry.mjs';
-import { applyLondonStationGroups } from './helpers/london-stations.mjs';
+import { applyLondonStationGroups, stripLondonDirectionSuffix } from './helpers/london-stations.mjs';
 import { describeLondonCrowding, selectLondonCrowdingReading } from './helpers/london-crowding.mjs';
+import { buildTflRequestUrls } from './helpers/tfl-request.mjs';
 import { describeLondonStationFacilities } from './helpers/london-station-facilities.mjs';
 import {
     LONDON_TUBE_LINE_IDS,
@@ -121,8 +122,16 @@ function formatLondonCountdown(ms) {
     return `${Math.max(1, Math.round(ms / 60000))} min`;
 }
 
+// Session-local prefix for synthetic train IDs. Not a secret, but there is no
+// reason not to use the platform's CSPRNG.
+function createLondonSessionId() {
+    const bytes = new Uint8Array(4);
+    window.crypto.getRandomValues(bytes);
+    return `${Date.now().toString(36)}-${Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')}`;
+}
+
 function getLondonDirectionLabel(label, destinationName) {
-    const clean = String(label || '').replace(/\s*\((inbound|outbound)\)\s*$/i, '').trim();
+    const clean = stripLondonDirectionSuffix(label);
 
     if (!clean || /^(inbound|outbound)$/i.test(clean)) {
         return destinationName ? `Towards ${destinationName}` : 'Service';
@@ -383,7 +392,7 @@ export default class extends Evented {
         me._londonLineStatusPollMs = 60000;
         me._londonLiveTrainPollMs = 10000;
         me._londonLiveTrainStates = new Map();
-        me._londonLiveTrainSessionId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+        me._londonLiveTrainSessionId = createLondonSessionId();
         me._londonLiveTrainSyntheticCounter = 1;
         me._londonTheme = 'light';
         me._londonStationDrawerData = null;
@@ -4839,8 +4848,6 @@ export default class extends Evented {
             ? (import.meta.env.VITE_TFL_PROXY_BASE || import.meta.env.VITE_TFL_PROXY || null)
             : null;
         const secretProxy = me.secrets && (me.secrets.tflProxyBase || me.secrets.tfl_proxy_base);
-        const useLocalhost = typeof location !== 'undefined' && location.hostname === 'localhost';
-        const url = new URL(`https://api.tfl.gov.uk${path}`);
 
         // Support either Vite env var or secrets injected into options
         const envKey = (typeof import.meta !== 'undefined' && import.meta.env && (
@@ -4858,68 +4865,25 @@ export default class extends Evented {
         const appKey = envKey || secretKey;
         const appId = envAppId || secretAppId;
 
-        if (appKey) {
-            url.searchParams.set('app_key', appKey);
-        } else if (!secretProxy && !envProxy && !me._tflKeyWarned) {
+        if (!appKey && !secretProxy && !envProxy && !me._tflKeyWarned) {
             me._tflKeyWarned = true;
-            console.warn('[London live trains] missing TfL app key (set MT3D_CONFIG.secrets.tflAppKey)');
-        }
-        if (appId) {
-            url.searchParams.set('app_id', appId);
+            console.warn('[London live trains] no TfL proxy or app key configured; using anonymous requests');
         }
 
-        const primary = url.toString();
-        const pathWithQuery = `${url.pathname}${url.search}`;
-        const proxyCandidates = [];
-
-        if (secretProxy) proxyCandidates.push(secretProxy);
-        if (envProxy && envProxy !== secretProxy) proxyCandidates.push(envProxy);
-        if (useLocalhost) {
-            proxyCandidates.push(
-                'https://api.tfl.gov.uk',
-                'https://api.allorigins.win/raw?url=',
-                'https://corsproxy.io/?'
-            );
-        } else {
-            proxyCandidates.push('https://api.tfl.gov.uk');
-        }
-
-        const requestUrls = [];
-        const seen = new Set();
-        const addCandidate = candidate => {
-            if (!candidate) return;
-            const base = String(candidate).trim();
-            if (!base) return;
-            let requestUrl;
-            if (/^https?:\/\/api\.tfl\.gov\.uk\/?$/i.test(base)) {
-                requestUrl = primary;
-            } else if (base.includes('{url}')) {
-                requestUrl = base.replace('{url}', encodeURIComponent(primary));
-            } else if (base.includes('api.tfl.gov.uk')) {
-                requestUrl = `${base.replace(/\/$/, '')}${pathWithQuery}`;
-            } else if (base.endsWith('?') || base.endsWith('=') || /[?&](url|target)=$/i.test(base)) {
-                requestUrl = `${base}${encodeURIComponent(primary)}`;
-            } else {
-                requestUrl = `${base.replace(/\/$/, '')}${pathWithQuery}`;
-            }
-            if (!seen.has(requestUrl)) {
-                seen.add(requestUrl);
-                requestUrls.push(requestUrl);
-            }
-        };
-
-        proxyCandidates.forEach(addCandidate);
-        if (!requestUrls.length) {
-            requestUrls.push(primary);
-        }
+        const requestUrls = buildTflRequestUrls({
+            path,
+            proxyBases: [secretProxy, envProxy].filter(Boolean),
+            appKey,
+            appId
+        });
 
         let lastError = null;
         for (const requestUrl of requestUrls) {
             try {
                 const res = await fetch(requestUrl);
                 if (!res.ok) {
-                    const text = await res.text().catch(() => '');
-                    throw new Error(`TfL ${res.status} ${text}`);
+                    // TfL error bodies echo the request URI, key included, so they are not logged.
+                    throw new Error(`TfL ${res.status}`);
                 }
                 return await res.json();
             } catch (e) {
@@ -5538,7 +5502,7 @@ export default class extends Evented {
 
     getDisplayRailwayTitle(railway) {
         const me = this;
-        return (me.getLocalizedRailwayTitle(railway) || '').replace(/\s+\((inbound|outbound)\)\s*$/i, '');
+        return stripLondonDirectionSuffix(me.getLocalizedRailwayTitle(railway));
     }
 
     getLocalizedTrainNameOrRailwayTitle(names, railway) {

@@ -36,9 +36,12 @@ const QUALIFIED_LABELS = new Set(['Boarding ramp']);
 export function parseLondonFacilityValue(value) {
     const text = String(value || '').trim();
 
-    const yes = /^yes\b\s*[-–(]?\s*(.*?)\)?\.?$/i.exec(text);
-    if (yes) {
-        return {count: null, qualifier: yes[1] || null};
+    if (/^yes\b/i.test(text)) {
+        // Trimmed by hand: a regex with optional punctuation around a lazy group backtracks badly.
+        let qualifier = text.slice(3).trim();
+        while (/^[-–(]/.test(qualifier)) qualifier = qualifier.slice(1).trim();
+        while (/[).]$/.test(qualifier)) qualifier = qualifier.slice(0, -1).trim();
+        return {count: null, qualifier: qualifier || null};
     }
     // Counts, including '1lift … and 1 lift …' and per-area breakdowns, are summed.
     if (/^\d/.test(text)) {

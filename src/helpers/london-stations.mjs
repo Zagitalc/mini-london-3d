@@ -28,3 +28,9 @@ export function applyLondonStationGroups(stations, stationGroupData) {
 
     return groupIdLookup;
 }
+
+// "Bakerloo (inbound)" -> "Bakerloo". Trimming first and anchoring on the
+// literal ")" keeps the regex linear on long whitespace runs.
+export function stripLondonDirectionSuffix(label) {
+    return String(label || '').trim().replace(/\((?:inbound|outbound)\)$/i, '').trim();
+}

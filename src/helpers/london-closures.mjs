@@ -80,7 +80,9 @@ export function normalizeLondonStationName(name) {
         .toLowerCase()
         .replace(/\([^)]*\)/g, ' ')
         .replace(/-underground\b/g, ' ')
-        .replace(/\b(underground|dlr|rail)?\s*stations?\b/g, ' ')
+        .replace(/\s+/g, ' ')
+        // Single spaces only: "\s*" next to an optional word would backtrack quadratically.
+        .replace(/\b(?:(?:underground|dlr|rail) )?stations?\b/g, ' ')
         .replace(/&/g, ' and ')
         .replace(/\bst\./g, 'st')
         .replace(/['’]/g, '')
@@ -115,9 +117,12 @@ function matchStationAtStart(phrase, nameIndex) {
  */
 export function extractLondonClosurePairs(reason, nameIndex) {
     const pairs = [];
-    const pattern = /between\s+(.+?)\s+and\s+(.+?)(?=[.;,(]|\s+(?:while|with|on|until|due|from|replacement|because|except|in)\b|$)/gi;
+    // Whitespace is collapsed first so the pattern can use literal single
+    // spaces; "\s+" beside lazy groups backtracks badly on long runs.
+    const text = String(reason || '').slice(0, 4000).replace(/\s+/g, ' ');
+    const pattern = /between (.+?) and (.+?)(?=[.;,(]| (?:while|with|on|until|due|from|replacement|because|except|in)\b|$)/gi;
 
-    for (const [, from, to] of String(reason || '').matchAll(pattern)) {
+    for (const [, from, to] of text.matchAll(pattern)) {
         const start = matchStationAtStart(from, nameIndex);
         if (!start.length) continue;
         for (const end of to.split('/')) {
