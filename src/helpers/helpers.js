@@ -45,7 +45,6 @@ export function loadJSON(url) {
     });
 }
 
-
 export function lerp(x, y, a) {
     return x * (1 - a) + y * a;
 }

@@ -5,7 +5,7 @@
   ],
   "parserOptions": {
     "sourceType": "module",
-    "ecmaVersion": 2018
+    "ecmaVersion": 2022
   },
   "plugins": [
     "import",
@@ -27,7 +27,10 @@
     "no-unused-vars": ["error", {"argsIgnorePattern": "^_"}],
     "no-warning-comments": "error",
     "no-mixed-operators": ["error", {"groups": [["&", "|", "^", "~", "<<", ">>", ">>>"], ["&&", "||"]]}],
-    "object-curly-spacing": ["error", "never"],
+    // Formatting rules the London code does not follow; enforcing them would
+    // mean reformatting most of map.js. Correctness rules stay on.
+    "object-curly-spacing": "off",
+    "operator-linebreak": "off",
     "prefer-arrow-callback": "error",
     "prefer-const": ["error", {"destructuring": "all"}],
     "prefer-template": "error",
@@ -35,7 +38,7 @@
     "space-before-function-paren": "off",
     "template-curly-spacing": "error",
     "no-useless-escape": "off",
-    "indent": ["error", 4, {
+    "indent": ["off", 4, {
       "flatTernaryExpressions": true,
       "CallExpression": {
         "arguments": "off"

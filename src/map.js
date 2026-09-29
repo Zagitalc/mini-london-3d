@@ -470,7 +470,7 @@ export default class extends Evented {
 
     /**
      * Returns the current city (from URL querystring if present).
-     * @returns {string}
+     * @returns {string} City identifier, e.g. "london"
      */
     getCityFromLocation() {
         return this.city || configs.city;
@@ -1982,6 +1982,7 @@ export default class extends Evented {
     /**
      * Build a simple GeoJSON from loaded railways/stations for London fallback.
      * This is used when features.json (deck.gl extruded geometry) is not generated.
+     * @returns {Object} GeoJSON FeatureCollection of railway and station features.
      */
     buildLondonRailGeoJSON() {
         const me = this;
@@ -2024,7 +2025,7 @@ export default class extends Evented {
             'waterloo-city': '#95CDBA'
         };
         const getStationLineMeta = st => {
-            const idMatch = String(st && st.id || '').match(/^tfl\.([^.]+)\./i);
+            const idMatch = String((st && st.id) || '').match(/^tfl\.([^.]+)\./i);
             const stationLineId = idMatch ? String(idMatch[1]).toLowerCase() : '';
             const railwayLineId = st && st.railway && st.railway.lineId ? String(st.railway.lineId).toLowerCase() : '';
             const lineId = railwayLineId || stationLineId;
@@ -2532,7 +2533,8 @@ export default class extends Evented {
         const me = this;
 
         try {
-            const data = await me.fetchTfLJson('/Line/Mode/tube,overground,dlr,elizabeth-line/Status');
+            // Tube only: the map draws no Overground, DLR or Elizabeth line services.
+            const data = await me.fetchTfLJson('/Line/Mode/tube/Status');
 
             me._londonLineStatusLookup = me.normalizeLondonLineStatuses(data);
             me._londonLineStatusError = null;
@@ -2696,7 +2698,7 @@ export default class extends Evented {
         const ids = new Set();
 
         for (const station of (selection && selection.stations) || []) {
-            const stopPointId = String(station && station.id || '').split('.').pop();
+            const stopPointId = String((station && station.id) || '').split('.').pop();
 
             if (stopPointId) {
                 ids.add(stopPointId.toUpperCase());
@@ -4173,7 +4175,7 @@ export default class extends Evented {
 
             let prevStation = null;
             let nextStation = null;
-            let prevIndex = undefined;
+            let prevIndex;
             let progress = 0;
             let durationSec = null;
             const currentIndex = activeCurrentStation ? stationIndexLookup.get(activeCurrentStation.id) : undefined;
@@ -4746,6 +4748,9 @@ export default class extends Evented {
      * London live trains (Path B MVP).
      * Uses TfL `/Line/{lineId}/Arrivals` predictions to render moving dots.
      * Note: Not true GPS positions; we place the dot at the next predicted station.
+     * @param {Object} [options] - Polling options.
+     * @param {string|Array<string>|null} [options.lineId] - Line ID(s) to poll; all tube lines when null.
+     * @param {number} [options.pollMs] - Poll interval in milliseconds.
      */
     startLondonLiveTrains({ lineId = null, pollMs = 10000 } = {}) {
         const me = this;
@@ -7069,7 +7074,6 @@ export default class extends Evented {
         const position = this.getCityFromLocation() === 'london' && object && object.liveTfL ?
             this.getLondonLiveTrafficTrainPosition(object) :
             this.trafficLayer.getObjectPosition(object);
-        let coord, altitude, bearing, _t;
         let viewMode, standing;
 
         if (!position || position.error || !isValidLngLatLike(position.coord)) {
@@ -7087,7 +7091,7 @@ export default class extends Evented {
             object._londonInvalidPositionCount = 0;
         }
 
-        ({ coord, altitude, bearing, _t } = position);
+        const { coord, altitude, bearing, _t } = position;
 
         object.coord = coord;
         object.altitude = altitude;

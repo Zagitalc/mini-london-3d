@@ -4,6 +4,8 @@ import {Panel} from './panels';
 import Plugin from './plugin';
 import Popup from './popup';
 import {ThreeLayer} from './layers';
+// The linter cannot see the default export inside Mapbox's bundled build; the bundler can.
+// eslint-disable-next-line import/default
 import mapboxgl from 'mapbox-gl';
 import * as three from 'three';
 import {GLTFLoader} from 'three/examples/jsm/loaders/GLTFLoader.js';

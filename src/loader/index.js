@@ -38,7 +38,6 @@ async function main() {
     poi();
 }
 
-
 if (isMainThread) {
     main();
 } else {
