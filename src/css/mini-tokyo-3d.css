@@ -2294,3 +2294,151 @@
         max-height: calc(100dvh - max(24px, env(safe-area-inset-top) + env(safe-area-inset-bottom)));
     }
 }
+
+/* ---- Mobile layout, readability and tap targets ---- */
+
+/* Padding was being added on top of calc(100% - 32px), pushing the search
+   panel past the right edge on phones. */
+.mini-tokyo-3d.is-london .london-search-panel,
+.mini-tokyo-3d.is-london .london-station-drawer,
+.mini-tokyo-3d.is-london .london-status-dialog,
+.mini-tokyo-3d.is-london .london-about-dialog {
+    box-sizing: border-box;
+}
+
+/* White on the dark theme's light blue was about 2:1 contrast. */
+.mini-tokyo-3d.is-london.london-theme-dark .london-primary-button {
+    color: #06121f;
+}
+
+/* Sentence case reads faster than letter-spaced capitals for station names. */
+.mini-tokyo-3d.is-london .london-departure-heading {
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 14px;
+    font-weight: 600;
+}
+.mini-tokyo-3d.is-london .london-departure-card-main strong {
+    font-size: 15px;
+}
+.mini-tokyo-3d.is-london .london-departure-time {
+    font-size: 16px;
+    white-space: nowrap;
+}
+
+/* Black (Northern) and other dark line colours vanish on the dark theme. */
+.mini-tokyo-3d.is-london.london-theme-dark .london-line-group-dot,
+.mini-tokyo-3d.is-london.london-theme-dark .london-line-swatch {
+    box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.7);
+}
+
+/* Tap targets of at least 44 px. */
+.mini-tokyo-3d.is-london .london-panel-close {
+    width: 44px;
+    height: 44px;
+    flex: none;
+}
+.mini-tokyo-3d.is-london .london-filter-chip,
+.mini-tokyo-3d.is-london .london-filter-reset {
+    min-height: 44px;
+    padding: 0 16px;
+    font-size: 14px;
+}
+.mini-tokyo-3d.is-london .london-topbar-button {
+    min-height: 44px;
+    white-space: nowrap;
+}
+.mini-tokyo-3d.is-london .london-status-label,
+.mini-tokyo-3d.is-london .london-status-meta {
+    white-space: nowrap;
+}
+
+@media (max-width: 600px) {
+    /* Compact top bar: one row of actions, no wrapped labels. */
+    .mini-tokyo-3d.is-london .london-topbar {
+        top: max(10px, env(safe-area-inset-top));
+        left: 10px;
+        right: 10px;
+        gap: 8px;
+        padding: 8px 10px 10px;
+        border-radius: 18px;
+    }
+    .mini-tokyo-3d.is-london .london-brand-subtitle {
+        display: none;
+    }
+    .mini-tokyo-3d.is-london .london-roundel {
+        width: 26px;
+        height: 26px;
+        border-width: 4px;
+    }
+    .mini-tokyo-3d.is-london .london-roundel span {
+        width: 24px;
+        height: 6px;
+    }
+    .mini-tokyo-3d.is-london .london-topbar-actions {
+        gap: 8px;
+    }
+    .mini-tokyo-3d.is-london .london-topbar-button {
+        padding: 0 12px;
+        gap: 8px;
+        font-size: 14px;
+    }
+    .mini-tokyo-3d.is-london .london-theme-toggle {
+        width: 44px;
+        min-width: 44px;
+        padding: 0;
+        justify-content: center;
+        flex: none;
+    }
+    .mini-tokyo-3d.is-london .london-theme-toggle-label {
+        display: none;
+    }
+    .mini-tokyo-3d.is-london .london-theme-toggle-icon {
+        font-size: 18px;
+    }
+    .mini-tokyo-3d.is-london .london-search-toggle {
+        flex: 1 1 auto;
+        justify-content: center;
+    }
+    .mini-tokyo-3d.is-london .london-status-trigger {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+    .mini-tokyo-3d.is-london .london-status-copy {
+        min-width: 0;
+    }
+    .mini-tokyo-3d.is-london .london-status-meta {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 100%;
+    }
+    .mini-tokyo-3d.is-london .mapboxgl-ctrl-top-left,
+    .mini-tokyo-3d.is-london .mapboxgl-ctrl-top-right {
+        top: 124px;
+    }
+
+    /* Panels span the width evenly below the top bar. */
+    .mini-tokyo-3d.is-london .london-search-panel {
+        top: 124px;
+        left: 10px;
+        right: 10px;
+        width: auto;
+        max-height: calc(100dvh - 134px);
+        padding: 16px;
+    }
+    .mini-tokyo-3d.is-london .london-station-drawer {
+        left: 10px;
+        right: 10px;
+        bottom: max(10px, env(safe-area-inset-bottom));
+        max-height: min(78dvh, calc(100dvh - 134px));
+    }
+
+    /* A slimmer footer leaves more room for departures. */
+    .mini-tokyo-3d.is-london .london-drawer-footer {
+        padding-top: 10px;
+        gap: 6px;
+    }
+    .mini-tokyo-3d.is-london .london-primary-button {
+        min-height: 44px;
+    }
+}

@@ -34,3 +34,19 @@ export function applyLondonStationGroups(stations, stationGroupData) {
 export function stripLondonDirectionSuffix(label) {
     return String(label || '').trim().replace(/\((?:inbound|outbound)\)$/i, '').trim();
 }
+
+const STATION_NAME_SUFFIXES = [' underground station', ' dlr station', ' rail station', ' station'];
+
+// "Epping Underground Station" -> "Epping". TfL appends these to every
+// destination, which makes departure headings wrap on phones.
+export function shortenLondonStationName(name) {
+    const text = String(name || '').trim();
+    const lower = text.toLowerCase();
+
+    for (const suffix of STATION_NAME_SUFFIXES) {
+        if (lower.endsWith(suffix) && lower.length > suffix.length) {
+            return text.slice(0, -suffix.length).trim();
+        }
+    }
+    return text;
+}
