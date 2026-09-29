@@ -30,7 +30,7 @@ import { matchObservationsToTrainStates } from './helpers/london-live-train-iden
 import { normalizeTfLObservations } from './helpers/london-live-train-observations.mjs';
 import { deriveRendererCommand, DWELL_MIN_MS, transitionTrainState } from './helpers/london-live-train-state.mjs';
 import { getLondonStationAnchor } from './helpers/london-geometry.mjs';
-import { applyLondonStationGroups, stripLondonDirectionSuffix } from './helpers/london-stations.mjs';
+import { applyLondonStationGroups, shortenLondonStationName, stripLondonDirectionSuffix } from './helpers/london-stations.mjs';
 import { describeLondonCrowding, selectLondonCrowdingReading } from './helpers/london-crowding.mjs';
 import { buildTflRequestUrls } from './helpers/tfl-request.mjs';
 import { describeLondonStationFacilities } from './helpers/london-station-facilities.mjs';
@@ -130,11 +130,21 @@ function createLondonSessionId() {
     return `${Date.now().toString(36)}-${Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')}`;
 }
 
+// "3–4 Oct", or "31 Oct – 1 Nov" across a month boundary; short enough not to wrap on phones.
+function formatLondonWeekendRange(saturday, sunday) {
+    const part = (ymd, options) => new Intl.DateTimeFormat('en-GB', {...options, timeZone: 'UTC'}).format(new Date(`${ymd}T12:00:00Z`));
+    const sameMonth = saturday.slice(0, 7) === sunday.slice(0, 7);
+
+    return sameMonth ?
+        `${part(saturday, {day: 'numeric'})}–${part(sunday, {day: 'numeric', month: 'short'})}` :
+        `${part(saturday, {day: 'numeric', month: 'short'})} – ${part(sunday, {day: 'numeric', month: 'short'})}`;
+}
+
 function getLondonDirectionLabel(label, destinationName) {
     const clean = stripLondonDirectionSuffix(label);
 
     if (!clean || /^(inbound|outbound)$/i.test(clean)) {
-        return destinationName ? `Towards ${destinationName}` : 'Service';
+        return destinationName ? `Towards ${shortenLondonStationName(destinationName)}` : 'Service';
     }
     return clean;
 }
@@ -2724,7 +2734,7 @@ export default class extends Evented {
                 lineId,
                 color: (line && line.color) || '#0098D4',
                 lineTitle: (line && line.title) || String(arrival.lineName || lineId || 'Line'),
-                destination: String(arrival.destinationName || 'Destination unavailable'),
+                destination: shortenLondonStationName(arrival.destinationName) || 'Destination unavailable',
                 directionLabel,
                 etaMs,
                 etaLabel: formatLondonCountdown(etaMs),
@@ -3268,7 +3278,7 @@ export default class extends Evented {
             '</div>',
             '</button>',
             '<div class="london-topbar-actions">',
-            `<button type="button" class="london-topbar-button london-theme-toggle" aria-pressed="${isDark}" title="Toggle ${isDark ? 'light' : 'dark'} mode">`,
+            `<button type="button" class="london-topbar-button london-theme-toggle" aria-pressed="${isDark}" aria-label="Dark mode" title="Toggle ${isDark ? 'light' : 'dark'} mode">`,
             `<span class="london-theme-toggle-icon" aria-hidden="true">${isDark ? '☾' : '☀'}</span>`,
             `<span class="london-theme-toggle-label">${isDark ? 'Dark' : 'Light'}</span>`,
             '</button>',
@@ -3671,14 +3681,12 @@ export default class extends Evented {
         const me = this;
         const ui = me._londonUI;
         const data = me._londonWeekendClosures;
-        const formatDay = ymd => new Intl.DateTimeFormat('en-GB', {weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC'})
-            .format(new Date(`${ymd}T12:00:00Z`));
         const saturday = data ? data.window.saturday : getLondonWeekendWindow(Date.now()).saturday;
         const sunday = new Date(Date.parse(`${saturday}T12:00:00Z`) + 86400000).toISOString().slice(0, 10);
         const closures = data ? data.closures : [];
         const unplaced = closures.some(closure => !closure.placed);
 
-        ui.statusUpdated.textContent = `Planned works • ${formatDay(saturday)} – ${formatDay(sunday)}`;
+        ui.statusUpdated.textContent = `Planned works • ${formatLondonWeekendRange(saturday, sunday)}`;
         ui.statusSummary.innerHTML = !data || data.loading ? '<div class="london-empty-state">Loading planned works…</div>' :
             data.error ? '<div class="london-empty-state">Planned works could not be loaded. Try again in a minute.</div>' :
             closures.length ? [
@@ -3813,30 +3821,6 @@ export default class extends Evented {
                 '</div>'
             ].join('')),
             '</section>',
-            '<section class="london-drawer-section">',
-            '<div class="london-section-heading-row">',
-            `<h3>${escapeHTML(capacity.title)}</h3>`,
-            `<span class="london-capacity-badge ${escapeHTML(String(capacity.tone || 'unknown'))}">${escapeHTML(capacity.status)}</span>`,
-            '</div>',
-            '<div class="london-crowding-meter">',
-            `<span class="london-crowding-fill ${escapeHTML(String(capacity.tone || 'unknown'))}" style="width:${escapeHTML(String(capacity.percent || 0))}%;"></span>`,
-            '</div>',
-            `<p class="london-capacity-copy">${escapeHTML(capacity.detail)}</p>`,
-            '</section>',
-            facilities ? [
-                '<section class="london-drawer-section">',
-                '<div class="london-section-heading-row">',
-                '<h3>Facilities</h3>',
-                facilities.zone ? `<span class="london-capacity-badge">${escapeHTML(facilities.zone)}</span>` : '',
-                '</div>',
-                facilities.items.length ? [
-                    '<ul class="london-facility-list">',
-                    facilities.items.map(item => `<li>${escapeHTML(item.label)}${item.detail ? ` <span>${escapeHTML(item.detail)}</span>` : ''}</li>`).join(''),
-                    '</ul>'
-                ].join('') : '<p class="london-capacity-copy">TfL lists no facilities for this station.</p>',
-                '</section>'
-            ].join('') : '',
-            '<div class="london-section-divider"></div>',
             '<section class="london-drawer-section london-departure-sections">',
             (loadingDepartures ? '<div class="london-empty-state">Loading live departures…</div>' :
                 hasLiveDepartureData ? departureGroups.map(group => [
@@ -3866,7 +3850,31 @@ export default class extends Evented {
                     '</div>'
                 ].join('')).join('') :
                 '<div class="london-empty-state">No live arrival data is available for this station right now.</div>'),
-            '</section>'
+            '</section>',
+            '<div class="london-section-divider"></div>',
+            '<section class="london-drawer-section">',
+            '<div class="london-section-heading-row">',
+            `<h3>${escapeHTML(capacity.title)}</h3>`,
+            `<span class="london-capacity-badge ${escapeHTML(String(capacity.tone || 'unknown'))}">${escapeHTML(capacity.status)}</span>`,
+            '</div>',
+            '<div class="london-crowding-meter">',
+            `<span class="london-crowding-fill ${escapeHTML(String(capacity.tone || 'unknown'))}" style="width:${escapeHTML(String(capacity.percent || 0))}%;"></span>`,
+            '</div>',
+            `<p class="london-capacity-copy">${escapeHTML(capacity.detail)}</p>`,
+            '</section>',
+            facilities ? [
+                '<section class="london-drawer-section">',
+                '<div class="london-section-heading-row">',
+                '<h3>Facilities</h3>',
+                facilities.zone ? `<span class="london-capacity-badge">${escapeHTML(facilities.zone)}</span>` : '',
+                '</div>',
+                facilities.items.length ? [
+                    '<ul class="london-facility-list">',
+                    facilities.items.map(item => `<li>${escapeHTML(item.label)}${item.detail ? ` <span>${escapeHTML(item.detail)}</span>` : ''}</li>`).join(''),
+                    '</ul>'
+                ].join('') : '<p class="london-capacity-copy">TfL lists no facilities for this station.</p>',
+                '</section>'
+            ].join('') : ''
         ].join('');
         ui.drawerCenter.textContent = stationMapLabel;
         ui.drawerUpdated.textContent = `Last updated ${updatedLabel}`;
@@ -4407,7 +4415,7 @@ export default class extends Evented {
 
             train.departureStation = prevStation;
             train.arrivalStation = sectionLength === 0 ? activeCurrentStation : (nextStation || next.station);
-            train.destinationName = t.dest;
+            train.destinationName = shortenLondonStationName(t.dest);
             train.timeToStation = next.timeToStation;
             train.currentLocation = t.currentLocation;
             train.platformName = next.platformName || '';

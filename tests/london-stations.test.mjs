@@ -36,3 +36,14 @@ test('applyLondonStationGroups assigns a shared rendered group id across lines',
     assert.equal(stations[1].group, 'tfl.bakerloo.940GZZLUOXC.og');
     assert.equal(stations[2].group, 'tfl.bakerloo.940GZZLUOXC.ug');
 });
+
+test('shortenLondonStationName drops TfL station suffixes only at the end', async () => {
+    const {shortenLondonStationName} = await import('../src/helpers/london-stations.mjs');
+
+    assert.equal(shortenLondonStationName('Epping Underground Station'), 'Epping');
+    assert.equal(shortenLondonStationName('Hammersmith (H&C Line) Underground Station'), 'Hammersmith (H&C Line)');
+    assert.equal(shortenLondonStationName('Stratford DLR Station'), 'Stratford');
+    assert.equal(shortenLondonStationName('Station Road'), 'Station Road');
+    assert.equal(shortenLondonStationName('Station'), 'Station');
+    assert.equal(shortenLondonStationName(undefined), '');
+});
