@@ -31,6 +31,7 @@ import { normalizeTfLObservations } from './helpers/london-live-train-observatio
 import { deriveRendererCommand, DWELL_MIN_MS, transitionTrainState } from './helpers/london-live-train-state.mjs';
 import { getLondonStationAnchor } from './helpers/london-geometry.mjs';
 import { applyLondonStationGroups } from './helpers/london-stations.mjs';
+import { describeLondonCrowding, selectLondonCrowdingReading } from './helpers/london-crowding.mjs';
 import { buildLondonTrainRouteFeature } from './helpers/london-train-route-geometry.mjs';
 import { GeoJsonLayer, ThreeLayer, Tile3DLayer, TrafficLayer } from './layers';
 import { loadBusData, loadDynamicBusData, loadDynamicFlightData, loadDynamicTrainData, loadStaticData, loadTimetableData, updateOdptUrl } from './loader';
@@ -2661,12 +2662,16 @@ export default class extends Evented {
             departures: existing.selectionId === resolvedSelection.id ? (existing.departures || []) : [],
             departureGroups: existing.selectionId === resolvedSelection.id ? (existing.departureGroups || []) : [],
             updatedAt: existing.selectionId === resolvedSelection.id ? existing.updatedAt : null,
-            capacity: me.getLondonStationCapacity(resolvedSelection)
+            capacity: existing.selectionId === resolvedSelection.id && existing.capacity ?
+                existing.capacity : me.getLondonStationCapacity(resolvedSelection)
         };
         me.renderLondonStationDrawer();
 
         const stopPointIds = me.getLondonStationStopPointIds(resolvedSelection);
-        const results = await Promise.allSettled(stopPointIds.map(id => me.fetchTfLJson(`/StopPoint/${id}/Arrivals`)));
+        const [results, crowding] = await Promise.all([
+            Promise.allSettled(stopPointIds.map(id => me.fetchTfLJson(`/StopPoint/${id}/Arrivals`))),
+            me.fetchLondonStationCrowding(stopPointIds).catch(() => null)
+        ]);
 
         if (requestId !== me._londonStationDrawerRequestId) {
             return;
@@ -2687,7 +2692,7 @@ export default class extends Evented {
             departures: departureRecords,
             departureGroups: me.groupLondonStationDepartureRecords(departureRecords),
             updatedAt: Date.now(),
-            capacity: me.getLondonStationCapacity(resolvedSelection)
+            capacity: me.getLondonStationCapacity(resolvedSelection, crowding)
         };
         me.renderLondonStationDrawer();
     }
@@ -2797,14 +2802,28 @@ export default class extends Evented {
         return records.sort((a, b) => getLondonStatusPriority(b) - getLondonStatusPriority(a) || a.title.localeCompare(b.title));
     }
 
-    getLondonStationCapacity(selection) {
-        return {
-            title: 'Platform capacity',
-            status: 'No data',
-            tone: 'unknown',
-            percent: 0,
-            detail: `No live crowding data is available for ${this.getLocalizedStationTitle(selection && selection.stations ? selection.stations[0] : []) || 'this station'} right now.`
-        };
+    getLondonStationCapacity(selection, reading = null) {
+        const title = this.getLocalizedStationTitle(selection && selection.stations ? selection.stations[0] : []);
+
+        return describeLondonCrowding(reading, title);
+    }
+
+    async fetchLondonStationCrowding(stopPointIds) {
+        const me = this;
+        const cache = me._londonCrowdingCache || (me._londonCrowdingCache = new Map());
+        const key = stopPointIds.join(',');
+        const cached = cache.get(key);
+
+        // TfL updates live crowding every few minutes; the drawer polls faster.
+        if (cached && Date.now() - cached.fetchedAt < 60000) {
+            return cached.reading;
+        }
+
+        const results = await Promise.allSettled(stopPointIds.map(id => me.fetchTfLJson(`/crowding/${id}/Live`)));
+        const reading = selectLondonCrowdingReading(results.map(result => (result.status === 'fulfilled' ? result.value : null)));
+
+        cache.set(key, {reading, fetchedAt: Date.now()});
+        return reading;
     }
 
     getLondonStationSearchResults(query) {
@@ -4590,7 +4609,7 @@ export default class extends Evented {
 
         if (appKey) {
             url.searchParams.set('app_key', appKey);
-        } else if (!me._tflKeyWarned) {
+        } else if (!secretProxy && !envProxy && !me._tflKeyWarned) {
             me._tflKeyWarned = true;
             console.warn('[London live trains] missing TfL app key (set MT3D_CONFIG.secrets.tflAppKey)');
         }
