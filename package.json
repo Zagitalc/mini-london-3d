@@ -75,6 +75,7 @@
     "build-data:london-gtfs": "node scripts/build-london-gtfs-geometry.js",
     "build-data:london-tfl-victoria": "node scripts/tfl_victoria_geometry_to_data_london.mjs",
     "build-data:london-osm-victoria": "node scripts/build-london-osm-victoria-geometry.mjs",
+    "build-data:london-facilities": "node scripts/build-london-station-facilities.mjs",
     "serve": "serve build",
     "build:london": "run-s build build-pages build-data:london",
     "start:london": "run-s build:london serve",

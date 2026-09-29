@@ -2057,6 +2057,31 @@
 .mini-tokyo-3d.is-london .london-crowding-fill.severe {
     background: linear-gradient(90deg, #ef4444, #dc2626);
 }
+.mini-tokyo-3d.is-london .london-facility-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.mini-tokyo-3d.is-london .london-facility-list li {
+    min-height: 28px;
+    padding: 0 10px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--london-text);
+    border: 1px solid var(--london-border);
+    background: var(--london-card-bg);
+}
+.mini-tokyo-3d.is-london .london-facility-list li span {
+    color: var(--london-muted);
+    font-variant-numeric: tabular-nums;
+}
 .mini-tokyo-3d.is-london .london-section-divider {
     width: 100%;
     height: 1px;
