@@ -76,7 +76,7 @@ export function flat(array) {
 }
 
 export function normalize(value) {
-    return value.normalize("NFD").replace(/\(.*\)|<.*>|〈.*〉|[\u0300-\u036F]/g, '');
+    return value.normalize("NFD").replace(/[()<>〈〉]|[\u0300-\u036F]/g, '');
 }
 
 export function valueOrDefault(value, defaultValue) {
