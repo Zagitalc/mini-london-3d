@@ -238,8 +238,35 @@ NavigationControl.prototype.disable = function () {
     me._updateZoomButtons();
 };
 
-// Segments inside a planned closure (Line Status > This weekend) are drawn grey.
-const LONDON_RAIL_COLOR = ['case', ['boolean', ['get', 'closed'], false], '#9AA1AB', ['get', 'color']];
+// Segments inside a planned closure (Line Status > This weekend) fade to a
+// quarter of their opacity and get a dashed overlay. Colour alone is not
+// enough: the Jubilee line is already grey.
+const LONDON_RAIL_CLOSED = ['boolean', ['get', 'closed'], false];
+
+function fadeClosedLondonRail(opacity) {
+    // Zoom interpolations must stay top-level, so the fade goes into each stop's output.
+    return opacity.map((value, i) => (i > 3 && i % 2 === 0 ? ['case', LONDON_RAIL_CLOSED, value * 0.25, value] : value));
+}
+
+function londonClosedRailLayer(londonPaint) {
+    return {
+        id: 'london-railways-closed',
+        type: 'line',
+        source: 'london-rail',
+        filter: ['all', ['==', ['get', 'type'], 'railway'], LONDON_RAIL_CLOSED],
+        layout: {
+            'line-join': 'round',
+            'line-cap': 'butt'
+        },
+        paint: {
+            'line-color': '#6B7280',
+            'line-width': londonPaint.lineWidth,
+            'line-offset': londonPaint.lineOffset,
+            'line-opacity': londonPaint.lineOpacity,
+            'line-dasharray': [1.2, 1.2]
+        }
+    };
+}
 
 export default class extends Evented {
 
@@ -1358,12 +1385,15 @@ export default class extends Evented {
                             'line-cap': 'round'
                         },
                         paint: {
-                            'line-color': LONDON_RAIL_COLOR,
+                            'line-color': ['get', 'color'],
                             'line-width': londonPaint.lineWidth,
                             'line-offset': londonPaint.lineOffset,
-                            'line-opacity': londonPaint.lineOpacity
+                            'line-opacity': fadeClosedLondonRail(londonPaint.lineOpacity)
                         }
                     });
+                }
+                if (!map.getLayer('london-railways-closed')) {
+                    map.addLayer(londonClosedRailLayer(londonPaint));
                 }
 
                 if (!map.getLayer('london-station-pills')) {
@@ -1410,6 +1440,7 @@ export default class extends Evented {
                 }
 
                 map.moveLayer('london-railways');
+                map.moveLayer('london-railways-closed');
                 if (map.getLayer('london-station-pills')) map.moveLayer('london-station-pills');
                 if (map.getLayer('london-station-pills-outline')) map.moveLayer('london-station-pills-outline');
                 if (map.getLayer('london-stations')) map.moveLayer('london-stations');
@@ -5974,12 +6005,15 @@ export default class extends Evented {
                                 'line-cap': 'round'
                             },
                             paint: {
-                                'line-color': LONDON_RAIL_COLOR,
+                                'line-color': ['get', 'color'],
                                 'line-width': londonPaint.lineWidth,
                                 'line-offset': londonPaint.lineOffset,
-                                'line-opacity': londonPaint.lineOpacity
+                                'line-opacity': fadeClosedLondonRail(londonPaint.lineOpacity)
                             }
                         }, 'trees');
+                    }
+                    if (!map.getLayer('london-railways-closed')) {
+                        map.addLayer(londonClosedRailLayer(londonPaint), 'trees');
                     }
                     if (!map.getLayer('london-station-pills')) {
                         map.addLayer({
