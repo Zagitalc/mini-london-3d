@@ -12,7 +12,6 @@ export default async function () {
         `${DATA_DIR}/stations.json`,
     ].map(loadJSON));
 
-
     const lookup = buildLookup(data);
 
     const stationGroupIDLookup = {};
@@ -61,7 +60,6 @@ export default async function () {
             }
         });
     }
-
 
     saveJSON('build/data/stations.json.gz', data);
 

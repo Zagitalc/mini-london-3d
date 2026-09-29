@@ -8,7 +8,7 @@ import {pathToFileURL} from 'node:url';
 import {buildTflUpstreamUrl, matchTflProxyPath} from '../src/helpers/tfl-proxy.mjs';
 
 test('matchTflProxyPath allows the paths the app uses', () => {
-    assert.equal(matchTflProxyPath('/Line/Mode/tube,overground,dlr,elizabeth-line/Status').name, 'line-status');
+    assert.equal(matchTflProxyPath('/Line/Mode/tube/Status').name, 'line-status');
     assert.equal(matchTflProxyPath('/Line/hammersmith-city/Arrivals').name, 'line-arrivals');
     assert.equal(matchTflProxyPath('/StopPoint/940GZZLUOXC/Arrivals').name, 'stop-point-arrivals');
     assert.equal(matchTflProxyPath('/crowding/940GZZLUBND/Live').name, 'crowding-live');
@@ -20,6 +20,7 @@ test('matchTflProxyPath refuses everything else', () => {
         '',
         'Line/victoria/Arrivals',
         '/Line/Mode/bus/Status',
+        '/Line/Mode/tube,overground,dlr,elizabeth-line/Status',
         '/Line/victoria/Arrivals/extra',
         '/Line/../Arrivals',
         '/StopPoint/940GZZLUOXC',

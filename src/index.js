@@ -2,6 +2,8 @@ import Marker from './marker';
 import Map from './map';
 import {Panel} from './panels';
 import Popup from './popup';
+// The linter cannot see the default export inside Mapbox's bundled build; the bundler can.
+// eslint-disable-next-line import/default
 import mapboxgl from 'mapbox-gl';
 import * as three from 'three';
 import {GLTFLoader} from 'three/examples/jsm/loaders/GLTFLoader.js';

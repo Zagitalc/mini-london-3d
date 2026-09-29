@@ -53,7 +53,7 @@ A public preview may use the application's unauthenticated direct TfL requests o
 The repository includes a Pages Function at `functions/tfl/[[path]].js`. Cloudflare Pages picks up the `functions/` directory at the project root automatically; it is not part of `build/`.
 
 - It serves `GET`/`HEAD` on `/tfl/<path>` and refuses every other method.
-- Only these upstream paths are allowed (see `src/helpers/tfl-proxy.mjs`): `/Line/Mode/{modes}/Status` for tube, overground, dlr and elizabeth-line; `/Line/{lineId}/Arrivals`; `/StopPoint/{id}/Arrivals`; `/crowding/{naptan}/Live`. Anything else returns 404, so it is not an open proxy.
+- Only these upstream paths are allowed (see `src/helpers/tfl-proxy.mjs`): `/Line/Mode/tube/Status`; `/Line/{tube line IDs}/Status/{date}/to/{date}` for planned works; `/Line/{lineId}/Arrivals`; `/StopPoint/{id}/Arrivals`; `/crowding/{naptan}/Live`. Anything else returns 404, so it is not an open proxy.
 - Client query strings are dropped. The key is added server-side from the Pages secret `TFL_APP_KEY`.
 - Upstream error bodies are not forwarded, because TfL can echo the request URI (key included) in them.
 - Successful responses are edge-cached for 15 to 60 seconds depending on the path.

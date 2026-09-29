@@ -4,7 +4,7 @@
 
 export const TFL_UPSTREAM_ORIGIN = 'https://api.tfl.gov.uk';
 
-const STATUS_MODES = new Set(['tube', 'overground', 'dlr', 'elizabeth-line']);
+const STATUS_MODES = new Set(['tube']);
 const LINE_ID = /^[a-z][a-z-]{1,31}$/;
 const STOP_POINT_ID = /^[0-9A-Za-z]{4,20}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
