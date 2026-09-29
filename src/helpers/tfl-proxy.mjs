@@ -7,27 +7,46 @@ export const TFL_UPSTREAM_ORIGIN = 'https://api.tfl.gov.uk';
 const STATUS_MODES = new Set(['tube', 'overground', 'dlr', 'elizabeth-line']);
 const LINE_ID = /^[a-z][a-z-]{1,31}$/;
 const STOP_POINT_ID = /^[0-9A-Za-z]{4,20}$/;
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const TUBE_LINES = new Set([
+    'bakerloo', 'central', 'circle', 'district', 'hammersmith-city', 'jubilee',
+    'metropolitan', 'northern', 'piccadilly', 'victoria', 'waterloo-city'
+]);
 
 // Each rule matches the path segments after /tfl and gives the edge cache TTL.
+// `query` is fixed server-side; client query strings are never forwarded.
 const RULES = [
     {
         name: 'line-status',
+        length: 4,
         ttl: 30,
         match: ([a, b, modes, c]) => a === 'Line' && b === 'Mode' && c === 'Status' &&
             modes.split(',').every(mode => STATUS_MODES.has(mode))
     },
     {
+        // TfL has no date-range form of /Line/Mode/{modes}/Status; it takes line IDs.
+        name: 'line-status-range',
+        length: 6,
+        ttl: 300,
+        query: {detail: 'true'},
+        match: ([a, ids, c, from, to, until]) => a === 'Line' && c === 'Status' &&
+            ids.split(',').every(id => TUBE_LINES.has(id)) && DATE.test(from) && to === 'to' && DATE.test(until)
+    },
+    {
         name: 'line-arrivals',
+        length: 3,
         ttl: 15,
         match: ([a, lineId, b]) => a === 'Line' && LINE_ID.test(lineId) && b === 'Arrivals'
     },
     {
         name: 'stop-point-arrivals',
+        length: 3,
         ttl: 15,
         match: ([a, id, b]) => a === 'StopPoint' && STOP_POINT_ID.test(id) && b === 'Arrivals'
     },
     {
         name: 'crowding-live',
+        length: 3,
         ttl: 60,
         match: ([a, id, b]) => a === 'crowding' && STOP_POINT_ID.test(id) && b === 'Live'
     }
@@ -36,17 +55,16 @@ const RULES = [
 /**
  * Resolves a proxied path against the allowlist.
  * @param {string} path - Path after the proxy prefix, e.g. "/Line/victoria/Arrivals".
- * @returns {Object|null} The matched rule name, canonical path and TTL, or null.
+ * @returns {Object|null} The matched rule name, path, TTL and fixed query, or null.
  */
 export function matchTflProxyPath(path) {
-    if (typeof path !== 'string' || !path.startsWith('/') || path.length > 120) {
+    if (typeof path !== 'string' || !path.startsWith('/') || path.length > 200) {
         return null;
     }
     const segments = path.slice(1).split('/');
-    const rule = segments.length === (segments[0] === 'Line' && segments[1] === 'Mode' ? 4 : 3) &&
-        RULES.find(candidate => candidate.match(segments));
+    const rule = RULES.find(candidate => candidate.length === segments.length && candidate.match(segments));
 
-    return rule ? {name: rule.name, path, ttl: rule.ttl} : null;
+    return rule ? {name: rule.name, path, ttl: rule.ttl, query: rule.query || null} : null;
 }
 
 /**
@@ -54,11 +72,15 @@ export function matchTflProxyPath(path) {
  * caller cannot override the key or reach other parameters.
  * @param {string} path - An allowlisted path.
  * @param {string} [appKey] - Server-side TfL app key.
+ * @param {Object} [query] - Fixed query parameters from the matched rule.
  * @returns {string} The upstream URL.
  */
-export function buildTflUpstreamUrl(path, appKey) {
+export function buildTflUpstreamUrl(path, appKey, query) {
     const url = new URL(`${TFL_UPSTREAM_ORIGIN}${path}`);
 
+    for (const [name, value] of Object.entries(query || {})) {
+        url.searchParams.set(name, value);
+    }
     if (appKey) {
         url.searchParams.set('app_key', appKey);
     }

@@ -33,6 +33,13 @@ import { getLondonStationAnchor } from './helpers/london-geometry.mjs';
 import { applyLondonStationGroups } from './helpers/london-stations.mjs';
 import { describeLondonCrowding, selectLondonCrowdingReading } from './helpers/london-crowding.mjs';
 import { describeLondonStationFacilities } from './helpers/london-station-facilities.mjs';
+import {
+    LONDON_TUBE_LINE_IDS,
+    extractLondonClosures,
+    getLondonWeekendWindow,
+    isLondonSegmentClosed,
+    normalizeLondonStationName
+} from './helpers/london-closures.mjs';
 import { buildLondonTrainRouteFeature } from './helpers/london-train-route-geometry.mjs';
 import { GeoJsonLayer, ThreeLayer, Tile3DLayer, TrafficLayer } from './layers';
 import { loadBusData, loadDynamicBusData, loadDynamicFlightData, loadDynamicTrainData, loadStaticData, loadTimetableData, updateOdptUrl } from './loader';
@@ -230,6 +237,9 @@ NavigationControl.prototype.disable = function () {
     me._disabled = true;
     me._updateZoomButtons();
 };
+
+// Segments inside a planned closure (Line Status > This weekend) are drawn grey.
+const LONDON_RAIL_COLOR = ['case', ['boolean', ['get', 'closed'], false], '#9AA1AB', ['get', 'color']];
 
 export default class extends Evented {
 
@@ -1348,7 +1358,7 @@ export default class extends Evented {
                             'line-cap': 'round'
                         },
                         paint: {
-                            'line-color': ['get', 'color'],
+                            'line-color': LONDON_RAIL_COLOR,
                             'line-width': londonPaint.lineWidth,
                             'line-offset': londonPaint.lineOffset,
                             'line-opacity': londonPaint.lineOpacity
@@ -2299,6 +2309,19 @@ export default class extends Evented {
 
     getFilteredLondonRailFeatures(features) {
         const me = this;
+        const closuresByLine = me.getLondonClosuresByLine();
+        const markClosed = list => (closuresByLine ? list.map(feature => {
+            const props = feature && feature.properties;
+            return props && props.type === 'railway' ?
+                {...feature, properties: {...props, closed: isLondonSegmentClosed(props, closuresByLine)}} :
+                feature;
+        }) : list);
+
+        return markClosed(me.filterLondonRailFeaturesByLine(features));
+    }
+
+    filterLondonRailFeaturesByLine(features) {
+        const me = this;
         const filters = me.getEffectiveLondonLineFilters();
 
         if (!me.hasActiveLondonFilters()) {
@@ -2471,6 +2494,90 @@ export default class extends Evented {
         me.renderLondonSearchPanel();
         me.renderLondonStatusModal();
         me.renderLondonStationDrawer();
+    }
+
+    getLondonClosureLineIndex(lineId) {
+        const me = this;
+        const cache = me._londonClosureLineIndex || (me._londonClosureLineIndex = new Map());
+
+        if (!cache.has(lineId)) {
+            const naptanOf = station => String((station && station.id) || station || '').split('.').pop().toUpperCase();
+            const nameIndex = new Map();
+
+            for (const station of me.stations ? me.stations.getAll() : []) {
+                if (!String(station.id).startsWith(`tfl.${lineId}.`)) continue;
+                const name = normalizeLondonStationName(station.title && (station.title.en || station.title[me.lang]));
+                const ids = nameIndex.get(name) || [];
+                if (!ids.includes(naptanOf(station))) ids.push(naptanOf(station));
+                nameIndex.set(name, ids);
+            }
+            const sequences = me.getLondonRailwaysByLineId(lineId).map(railway => (railway.stations || []).map(naptanOf));
+            cache.set(lineId, nameIndex.size ? {nameIndex, sequences} : null);
+        }
+        return cache.get(lineId);
+    }
+
+    async refreshLondonWeekendClosures() {
+        const me = this;
+        const range = getLondonWeekendWindow(Date.now());
+        const current = me._londonWeekendClosures;
+        const sameWeekend = current && current.window.saturday === range.saturday;
+
+        // Planned works change rarely; refetch every 10 minutes, or 1 minute after an error.
+        if (sameWeekend && (current.loading || Date.now() - current.fetchedAt < (current.error ? 60000 : 600000))) {
+            return;
+        }
+
+        const requestId = (me._londonWeekendRequestId || 0) + 1;
+        me._londonWeekendRequestId = requestId;
+        me._londonWeekendClosures = {window: range, closures: sameWeekend ? current.closures : [], loading: true, error: null, fetchedAt: 0};
+        me.renderLondonStatusModal();
+
+        let next;
+        try {
+            const data = await me.fetchTfLJson(`/Line/${LONDON_TUBE_LINE_IDS.join(',')}/Status/${range.saturday}/to/${range.monday}?detail=true`);
+            next = {window: range, closures: extractLondonClosures(data, range, lineId => me.getLondonClosureLineIndex(lineId)), error: null};
+        } catch (error) {
+            next = {window: range, closures: [], error};
+        }
+        // A newer request (e.g. after the weekend rolled over) wins.
+        if (requestId !== me._londonWeekendRequestId) {
+            return;
+        }
+        me._londonWeekendClosures = {...next, loading: false, fetchedAt: Date.now()};
+        me.applyLondonClosureView();
+    }
+
+    setLondonStatusView(view) {
+        const me = this;
+
+        me._londonStatusView = view === 'weekend' ? 'weekend' : 'now';
+        if (me._londonStatusView === 'weekend') {
+            me.refreshLondonWeekendClosures();
+        }
+        me.applyLondonClosureView();
+    }
+
+    applyLondonClosureView() {
+        const me = this;
+
+        me.applyLondonLineFilters({restartLiveTrains: false});
+        me.renderLondonStatusModal();
+    }
+
+    getLondonClosuresByLine() {
+        const me = this;
+        const data = me._londonWeekendClosures;
+
+        if (me._londonStatusView !== 'weekend' || !data) {
+            return null;
+        }
+        const byLine = new Map();
+        for (const closure of data.closures) {
+            if (!closure.placed) continue;
+            byLine.set(closure.lineId, [...(byLine.get(closure.lineId) || []), closure]);
+        }
+        return byLine;
     }
 
     startLondonLineStatusPolling({ pollMs = 60000 } = {}) {
@@ -2973,6 +3080,10 @@ export default class extends Evented {
             '<div class="london-card-eyebrow">Network-wide</div>',
             '<h2 id="london-status-title">Line Status</h2>',
             '<p class="london-status-updated">Live updates • Waiting for live data</p>',
+            '<div class="london-status-view" role="group" aria-label="Status period">',
+            '<button type="button" data-view="now" aria-pressed="true">Now</button>',
+            '<button type="button" data-view="weekend" aria-pressed="false">This weekend</button>',
+            '</div>',
             '</div>',
             '<button type="button" class="london-panel-close" aria-label="Close line status">×</button>',
             '</div>',
@@ -2990,6 +3101,10 @@ export default class extends Evented {
         me._londonUI.statusBody = statusModal.querySelector('.london-status-dialog-body');
         me._londonUI.statusSummary = statusModal.querySelector('.london-status-summary-region');
         me._londonUI.statusGrid = statusModal.querySelector('.london-status-grid');
+        me._londonUI.statusViewButtons = Array.from(statusModal.querySelectorAll('.london-status-view button'));
+        for (const button of me._londonUI.statusViewButtons) {
+            button.addEventListener('click', () => me.setLondonStatusView(button.dataset.view));
+        }
 
         aboutModal.innerHTML = [
             '<div id="london-about-dialog" class="london-about-dialog" role="dialog" aria-labelledby="london-about-title" tabindex="-1">',
@@ -3097,7 +3212,11 @@ export default class extends Evented {
         const severeCount = records.filter(record => getLondonStatusTone(record.statusText) === 'severe').length;
         const minorCount = records.filter(record => getLondonStatusTone(record.statusText) === 'minor').length;
         const statusTone = severeCount ? 'severe' : minorCount ? 'minor' : 'good';
-        const statusLabel = severeCount ? `${severeCount} severe` : minorCount ? `${minorCount} updates` : 'Good service';
+        const weekend = me._londonStatusView === 'weekend' ? me._londonWeekendClosures : null;
+        const weekendCount = weekend ? new Set(weekend.closures.map(closure => closure.lineId)).size : 0;
+        const statusLabel = weekend ? (weekend.loading ? 'Weekend: loading…' : weekend.error ? 'Weekend: unavailable' :
+            weekendCount ? `Weekend: ${weekendCount} line${weekendCount === 1 ? '' : 's'} affected` : 'Weekend: no closures') :
+            severeCount ? `${severeCount} severe` : minorCount ? `${minorCount} updates` : 'Good service';
         const isDark = me._londonTheme === 'dark';
 
         ui.topbar.innerHTML = [
@@ -3477,7 +3596,6 @@ export default class extends Evented {
                 reason: status.reason || ''
             };
         }).sort((a, b) => getLondonStatusPriority(b) - getLondonStatusPriority(a) || a.title.localeCompare(b.title));
-        const severeRecords = records.filter(record => getLondonStatusTone(record.statusText) === 'severe');
         const updatedLabel = me._londonLineStatusUpdatedAt
             ? new Intl.DateTimeFormat(me.lang, {
                 hour: '2-digit',
@@ -3490,6 +3608,75 @@ export default class extends Evented {
         const activeElementWasInDialog = activeElement && ui.statusDialog.contains(activeElement);
 
         me.setLondonModalVisibility('status', !!(me._londonModalCoordinator && me._londonModalCoordinator.isActive('status')));
+        for (const button of ui.statusViewButtons || []) {
+            button.setAttribute('aria-pressed', String(button.dataset.view === (me._londonStatusView || 'now')));
+        }
+        if (me._londonStatusView === 'weekend') {
+            me.renderLondonWeekendStatus(records);
+        } else {
+            me.renderLondonNowStatus(records, updatedLabel);
+        }
+
+        ui.statusBody.scrollTop = Math.min(previousScrollTop, Math.max(0, ui.statusBody.scrollHeight - ui.statusBody.clientHeight));
+        if (me._londonStatusModalOpen && activeElementWasInDialog) {
+            if (activeElement.isConnected && ui.statusDialog.contains(activeElement)) {
+                activeElement.focus();
+            } else {
+                ui.statusClose.focus();
+            }
+        }
+    }
+
+    renderLondonWeekendStatus(records) {
+        const me = this;
+        const ui = me._londonUI;
+        const data = me._londonWeekendClosures;
+        const formatDay = ymd => new Intl.DateTimeFormat('en-GB', {weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC'})
+            .format(new Date(`${ymd}T12:00:00Z`));
+        const saturday = data ? data.window.saturday : getLondonWeekendWindow(Date.now()).saturday;
+        const sunday = new Date(Date.parse(`${saturday}T12:00:00Z`) + 86400000).toISOString().slice(0, 10);
+        const closures = data ? data.closures : [];
+        const unplaced = closures.some(closure => !closure.placed);
+
+        ui.statusUpdated.textContent = `Planned works • ${formatDay(saturday)} – ${formatDay(sunday)}`;
+        ui.statusSummary.innerHTML = !data || data.loading ? '<div class="london-empty-state">Loading planned works…</div>' :
+            data.error ? '<div class="london-empty-state">Planned works could not be loaded. Try again in a minute.</div>' :
+            closures.length ? [
+                '<div class="london-closure-summary">',
+                '<strong>Closed sections are grey on the map.</strong>',
+                unplaced ? '<span>Short overnight closures, and any that could not be matched to stations, are listed only.</span>' : '',
+                '</div>'
+            ].join('') : '';
+        const hasClosure = record => closures.some(closure => closure.lineId === record.lineId);
+        const sorted = records.slice().sort((a, b) => hasClosure(b) - hasClosure(a) || a.title.localeCompare(b.title));
+
+        ui.statusGrid.innerHTML = sorted.map(record => {
+            const lineClosures = closures.filter(closure => closure.lineId === record.lineId);
+            const tone = lineClosures.length ? 'severe' : 'good';
+
+            return [
+                `<div class="london-status-card ${tone}">`,
+                `<span class="london-status-line" style="background-color:${escapeHTML(record.color)};"></span>`,
+                '<div class="london-status-card-copy">',
+                `<strong>${escapeHTML(record.title)}</strong>`,
+                lineClosures.length ? lineClosures.map(closure => [
+                    `<span class="status-text ${tone}">${escapeHTML(closure.statusText)}</span>`,
+                    closure.reason ? `<span class="status-reason">${escapeHTML(closure.reason)}</span>` : '',
+                    closure.placed ? '' : `<span class="status-reason london-closure-unplaced">${closure.brief ?
+                        'Overnight only; not shown on the map.' : 'Could not be matched to stations; not shown on the map.'}</span>`
+                ].join('')).join('') :
+                    `<span class="status-text good">${data && !data.loading && !data.error ? 'No planned closures' : '—'}</span>`,
+                '</div>',
+                '</div>'
+            ].join('');
+        }).join('');
+    }
+
+    renderLondonNowStatus(records, updatedLabel) {
+        const me = this;
+        const ui = me._londonUI;
+        const severeRecords = records.filter(record => getLondonStatusTone(record.statusText) === 'severe');
+
         ui.statusUpdated.textContent = `Live updates • ${updatedLabel}`;
         ui.statusSummary.innerHTML = severeRecords.length ? [
             '<div class="london-severe-summary">',
@@ -3507,15 +3694,6 @@ export default class extends Evented {
             '</div>',
             '</div>'
         ].join('')).join('');
-
-        ui.statusBody.scrollTop = Math.min(previousScrollTop, Math.max(0, ui.statusBody.scrollHeight - ui.statusBody.clientHeight));
-        if (me._londonStatusModalOpen && activeElementWasInDialog) {
-            if (activeElement.isConnected && ui.statusDialog.contains(activeElement)) {
-                activeElement.focus();
-            } else {
-                ui.statusClose.focus();
-            }
-        }
     }
 
     renderLondonStationDrawer() {
@@ -5796,7 +5974,7 @@ export default class extends Evented {
                                 'line-cap': 'round'
                             },
                             paint: {
-                                'line-color': ['get', 'color'],
+                                'line-color': LONDON_RAIL_COLOR,
                                 'line-width': londonPaint.lineWidth,
                                 'line-offset': londonPaint.lineOffset,
                                 'line-opacity': londonPaint.lineOpacity

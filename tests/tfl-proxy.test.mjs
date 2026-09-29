@@ -12,6 +12,7 @@ test('matchTflProxyPath allows the paths the app uses', () => {
     assert.equal(matchTflProxyPath('/Line/hammersmith-city/Arrivals').name, 'line-arrivals');
     assert.equal(matchTflProxyPath('/StopPoint/940GZZLUOXC/Arrivals').name, 'stop-point-arrivals');
     assert.equal(matchTflProxyPath('/crowding/940GZZLUBND/Live').name, 'crowding-live');
+    assert.deepEqual(matchTflProxyPath('/Line/bakerloo,central,circle,district,hammersmith-city,jubilee,metropolitan,northern,piccadilly,victoria,waterloo-city/Status/2026-10-03/to/2026-10-05').query, {detail: 'true'});
 });
 
 test('matchTflProxyPath refuses everything else', () => {
@@ -25,6 +26,13 @@ test('matchTflProxyPath refuses everything else', () => {
         '/StopPoint/940GZZLUOXC/Arrivals%2F..',
         '/crowding/940GZZLUBND',
         '/Journey/JourneyResults/a/to/b',
+        '/Line/Mode/bus/Status/2026-10-03/to/2026-10-05',
+        '/Line/jubilee/Status/2026-10-03/to/next-week',
+        '/Line/jubilee/Status/2026-10-03/from/2026-10-05',
+        '/Line/11/Status/2026-10-03/to/2026-10-05',
+        '/Line/jubilee,11/Status/2026-10-03/to/2026-10-05',
+        '/Line/Mode/tube/Status/2026-10-03/to/2026-10-05',
+        `/Line/${'jubilee,'.repeat(30)}jubilee/Status/2026-10-03/to/2026-10-05`,
         '//evil.example/Line/victoria/Arrivals'
     ]) {
         assert.equal(matchTflProxyPath(path), null, path);
@@ -37,6 +45,10 @@ test('buildTflUpstreamUrl stays on the TfL origin and adds the key', () => {
     assert.equal(url.origin, 'https://api.tfl.gov.uk');
     assert.equal(url.searchParams.get('app_key'), 'k');
     assert.equal(new URL(buildTflUpstreamUrl('/Line/victoria/Arrivals')).search, '');
+    assert.equal(
+        buildTflUpstreamUrl('/Line/jubilee/Status/2026-10-03/to/2026-10-05', 'k', {detail: 'true'}),
+        'https://api.tfl.gov.uk/Line/jubilee/Status/2026-10-03/to/2026-10-05?detail=true&app_key=k'
+    );
 });
 
 // The function file is named [[path]].js; copy it to an .mjs so Node loads it as ESM.
