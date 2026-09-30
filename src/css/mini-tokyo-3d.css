@@ -1219,9 +1219,6 @@
         radial-gradient(circle at top left, rgba(27, 109, 255, 0.18), transparent 28%),
         linear-gradient(180deg, #030814 0%, #061125 100%);
 }
-.mini-tokyo-3d.is-london.london-theme-dark .mapboxgl-canvas {
-    filter: brightness(0.72) saturate(0.92) contrast(1.08);
-}
 .mini-tokyo-3d.is-london #loading-error,
 .mini-tokyo-3d.is-london .loader-inner {
     background: var(--london-surface-strong);
