@@ -24,9 +24,10 @@ jobs:
         with:
           node-version: 24
 
-      # package-lock.json is not committed, so npm ci is not available.
+      # Installs exactly the versions in package-lock.json, and fails if the
+      # lock file and package.json disagree.
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Lint
         run: npm run lint
