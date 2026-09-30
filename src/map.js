@@ -1,6 +1,4 @@
-import turfBuffer from '@turf/buffer';
 import turfDistance from '@turf/distance';
-import { lineString } from '@turf/helpers';
 import { featureEach } from '@turf/meta';
 import { Evented, FullscreenControl, LngLat, LngLatBounds, Map as Mapbox, MercatorCoordinate, NavigationControl } from 'mapbox-gl';
 import AnimatedPopup from 'mapbox-gl-animated-popup';
@@ -34,6 +32,7 @@ import { applyLondonStationGroups, shortenLondonStationName, stripLondonDirectio
 import { describeLondonCrowding, selectLondonCrowdingReading } from './helpers/london-crowding.mjs';
 import { buildTflRequestUrls } from './helpers/tfl-request.mjs';
 import { buildServiceHistoryChart, describeServiceHistoryRow, formatServiceHours } from './helpers/london-service-history-chart.mjs';
+import { drawLondonPillImage, LONDON_PILL_MAX_LINES, LONDON_PILL_PIXEL_RATIO, londonPillImageExpression, londonPillImageId, londonStationSizeExpressions } from './helpers/london-station-style.mjs';
 import { londonBaseMapPaintUpdates, londonEmissiveUpdates, londonLightingTime, londonRailLineColourExpression } from './helpers/london-map-theme.mjs';
 import { describeLondonStationFacilities } from './helpers/london-station-facilities.mjs';
 import { describeLondonStationStories } from './helpers/london-station-stories.mjs';
@@ -49,7 +48,6 @@ import { GeoJsonLayer, ThreeLayer, Tile3DLayer, TrafficLayer } from './layers';
 import { loadBusData, loadDynamicBusData, loadDynamicFlightData, loadDynamicTrainData, loadStaticData, loadTimetableData, updateOdptUrl } from './loader';
 import { AboutPanel, BusPanel, LayerPanel, SharePanel, StationPanel, TrainPanel } from './panels';
 import Plugin from './plugin';
-import destination from './turf/destination';
 import nearestCloserPointOnLine from './turf/nearest-closer-point-on-line';
 
 const RAILWAY_NAMBOKU = 'TokyoMetro.Namboku',
@@ -267,8 +265,7 @@ const LONDON_RAIL_CLOSED = ['boolean', ['get', 'closed'], false];
 
 // Tube lines and stations keep their exact colours whatever the lighting.
 const LONDON_OVERLAY_LAYER_IDS = [
-    'london-railways', 'london-railways-closed', 'london-station-pills',
-    'london-station-pills-outline', 'london-stations'
+    'london-railways', 'london-railways-closed', 'london-station-pills', 'london-stations'
 ];
 
 function fadeClosedLondonRail(opacity) {
@@ -292,6 +289,29 @@ function londonClosedRailLayer(londonPaint) {
             'line-offset': londonPaint.lineOffset,
             'line-opacity': londonPaint.lineOpacity,
             'line-dasharray': [1.2, 1.2]
+        }
+    };
+}
+
+// Interchanges: a white capsule icon of fixed screen size, rotated to the
+// track. The icon lies east-west, hence bearing - 90.
+function londonStationPillLayer(londonPaint) {
+    return {
+        id: 'london-station-pills',
+        type: 'symbol',
+        source: 'london-rail',
+        filter: ['all', ['==', ['get', 'type'], 'station'], ['==', ['get', 'shape'], 'pill']],
+        layout: {
+            'icon-image': londonPillImageExpression(),
+            'icon-size': londonPaint.pillIconSize,
+            'icon-rotate': ['-', ['coalesce', ['get', 'bearing'], 0], 90],
+            'icon-rotation-alignment': 'map',
+            'icon-pitch-alignment': 'map',
+            'icon-allow-overlap': true,
+            'icon-ignore-placement': true
+        },
+        paint: {
+            'icon-opacity': londonPaint.stationOpacity
         }
     };
 }
@@ -485,6 +505,7 @@ export default class extends Evented {
     }
 
     getLondonFallbackPaintExpressions() {
+        const stationSizes = londonStationSizeExpressions();
         const lineWidth = [
             'interpolate',
             ['linear'],
@@ -532,34 +553,10 @@ export default class extends Evented {
                 18, 0.82,
                 19, 0.78
             ],
-            stationDotRadius: [
-                'interpolate',
-                ['linear'],
-                ['zoom'],
-                9, 0.7,
-                10, 1.2,
-                11, 2.2,
-                12, 3.6,
-                13, 5.0,
-                14, 6.0,
-                15, 5.2,
-                16, 4.2,
-                17, 3.4,
-                18, 2.8,
-                19, 2.4
-            ],
-            stationDotStrokeWidth: [
-                'interpolate',
-                ['linear'],
-                ['zoom'],
-                9, 0.35,
-                10, 0.5,
-                12, 1.1,
-                14, 1.8,
-                16, 1.4,
-                18, 1.1,
-                19, 0.95
-            ],
+            // Screen-space sizes shared by dots and pills; see london-station-style.mjs.
+            stationDotRadius: stationSizes.dotRadius,
+            stationDotStrokeWidth: stationSizes.dotStrokeWidth,
+            pillIconSize: stationSizes.pillIconSize,
             stationOpacity: [
                 'interpolate',
                 ['linear'],
@@ -572,20 +569,21 @@ export default class extends Evented {
                 16, 0.9,
                 18, 0.78,
                 19, 0.68
-            ],
-            pillOutlineWidth: [
-                'interpolate',
-                ['linear'],
-                ['zoom'],
-                9, 0.4,
-                10, 0.6,
-                12, 1.3,
-                14, 2.2,
-                16, 1.7,
-                18, 1.3,
-                19, 1.1
             ]
         };
+    }
+
+    // Adds the interchange capsule icons (2 to LONDON_PILL_MAX_LINES lines).
+    // Images are dropped with the style, so this runs whenever the layer is added.
+    ensureLondonStationImages() {
+        const map = this.map;
+
+        for (let count = 2; count <= LONDON_PILL_MAX_LINES; count++) {
+            const id = londonPillImageId(count);
+            if (!map.hasImage(id)) {
+                map.addImage(id, drawLondonPillImage(count), {pixelRatio: LONDON_PILL_PIXEL_RATIO});
+            }
+        }
     }
 
     ensureLondon3DBuildingsLayer() {
@@ -1425,30 +1423,8 @@ export default class extends Evented {
                 }
 
                 if (!map.getLayer('london-station-pills')) {
-                    map.addLayer({
-                        id: 'london-station-pills',
-                        type: 'fill',
-                        source: 'london-rail',
-                        filter: ['all', ['==', ['get', 'type'], 'station'], ['==', ['get', 'shape'], 'pill']],
-                        paint: {
-                            'fill-color': '#ffffff',
-                            'fill-opacity': londonPaint.stationOpacity
-                        }
-                    });
-                }
-
-                if (!map.getLayer('london-station-pills-outline')) {
-                    map.addLayer({
-                        id: 'london-station-pills-outline',
-                        type: 'line',
-                        source: 'london-rail',
-                        filter: ['all', ['==', ['get', 'type'], 'station'], ['==', ['get', 'shape'], 'pill']],
-                        paint: {
-                            'line-color': '#000000',
-                            'line-width': londonPaint.pillOutlineWidth,
-                            'line-opacity': londonPaint.stationOpacity
-                        }
-                    });
+                    me.ensureLondonStationImages();
+                    map.addLayer(londonStationPillLayer(londonPaint));
                 }
 
                 if (!map.getLayer('london-stations')) {
@@ -1470,7 +1446,6 @@ export default class extends Evented {
                 map.moveLayer('london-railways');
                 map.moveLayer('london-railways-closed');
                 if (map.getLayer('london-station-pills')) map.moveLayer('london-station-pills');
-                if (map.getLayer('london-station-pills-outline')) map.moveLayer('london-station-pills-outline');
                 if (map.getLayer('london-stations')) map.moveLayer('london-stations');
                 me.applyLondonMapTheme();
             };
@@ -1767,7 +1742,7 @@ export default class extends Evented {
             if (me.getCityFromLocation() !== 'london') {
                 return null;
             }
-            const hitLayers = ['london-stations', 'london-station-pills', 'london-station-pills-outline']
+            const hitLayers = ['london-stations', 'london-station-pills']
                 .filter(id => map.getLayer(id));
             if (!hitLayers.length) {
                 return null;
@@ -1781,7 +1756,7 @@ export default class extends Evented {
 
         map.on('mousemove', e => {
             if (me.getCityFromLocation() === 'london') {
-                const hoverLayers = ['london-stations', 'london-station-pills', 'london-station-pills-outline']
+                const hoverLayers = ['london-stations', 'london-station-pills']
                     .filter(id => map.getLayer(id));
                 if (hoverLayers.length) {
                     const stationHoverHit = map.queryRenderedFeatures(e.point, {
@@ -2125,16 +2100,6 @@ export default class extends Evented {
             return best ? best.bearing : 0;
         };
 
-        const createCapsulePolygon = (coord, bearing, lineCount) => {
-            const normalizedLineCount = Math.min(Math.max(lineCount, 2), 6);
-            const halfLength = (55 + normalizedLineCount * 14) / 1000;
-            const radius = (16 + normalizedLineCount * 3) / 1000;
-            const start = destination(coord, halfLength, (bearing + 180) % 360);
-            const end = destination(coord, halfLength, bearing);
-            const segment = lineString([start, end]);
-            return turfBuffer(segment, radius, { units: 'kilometers', steps: 20 });
-        };
-
         const stationGroupLookup = new Map();
         const popupLookup = new Map();
 
@@ -2176,25 +2141,17 @@ export default class extends Evented {
             };
 
             if (interchange) {
-                const bearing = inferBearing(center, lines);
-                const capsule = createCapsulePolygon(center, bearing, lines.length);
-                if (capsule && capsule.geometry) {
-                    fc.features.push({
-                        type: 'Feature',
-                        geometry: capsule.geometry,
-                        properties
-                    });
-                }
-            } else {
-                fc.features.push({
-                    type: 'Feature',
-                    geometry: {
-                        type: 'Point',
-                        coordinates: center
-                    },
-                    properties
-                });
+                // Drawn as a rotated icon of fixed screen size (london-station-pills).
+                properties.bearing = inferBearing(center, lines);
             }
+            fc.features.push({
+                type: 'Feature',
+                geometry: {
+                    type: 'Point',
+                    coordinates: center
+                },
+                properties
+            });
 
             popupLookup.set(entry.group, {
                 title,
@@ -4776,7 +4733,7 @@ export default class extends Evented {
         };
 
         if (!me._londonHoverStationsBound) {
-            const stationLayers = ['london-stations', 'london-station-pills', 'london-station-pills-outline'];
+            const stationLayers = ['london-stations', 'london-station-pills'];
             let boundAny = false;
             for (const layerId of stationLayers) {
                 if (!map.getLayer(layerId)) continue;
@@ -6199,29 +6156,8 @@ export default class extends Evented {
                         map.addLayer(londonClosedRailLayer(londonPaint), 'trees');
                     }
                     if (!map.getLayer('london-station-pills')) {
-                        map.addLayer({
-                            id: 'london-station-pills',
-                            type: 'fill',
-                            source: 'london-rail',
-                            filter: ['all', ['==', ['get', 'type'], 'station'], ['==', ['get', 'shape'], 'pill']],
-                            paint: {
-                                'fill-color': '#ffffff',
-                                'fill-opacity': londonPaint.stationOpacity
-                            }
-                        }, 'trees');
-                    }
-                    if (!map.getLayer('london-station-pills-outline')) {
-                        map.addLayer({
-                            id: 'london-station-pills-outline',
-                            type: 'line',
-                            source: 'london-rail',
-                            filter: ['all', ['==', ['get', 'type'], 'station'], ['==', ['get', 'shape'], 'pill']],
-                            paint: {
-                                'line-color': '#000000',
-                                'line-width': londonPaint.pillOutlineWidth,
-                                'line-opacity': londonPaint.stationOpacity
-                            }
-                        }, 'trees');
+                        me.ensureLondonStationImages();
+                        map.addLayer(londonStationPillLayer(londonPaint), 'trees');
                     }
                     if (!map.getLayer('london-stations')) {
                         map.addLayer({
