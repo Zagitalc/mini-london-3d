@@ -310,7 +310,7 @@ export function extractLondonRelationCorridors(match, stationCoords, options = {
     return corridors;
 }
 
-function slugifyIdentity(value) {
+export function slugifyIdentity(value) {
     return String(value || '')
         .toLowerCase()
         .replace(/^tfl\./, '')
