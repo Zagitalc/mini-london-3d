@@ -33,6 +33,7 @@ import { getLondonStationAnchor } from './helpers/london-geometry.mjs';
 import { applyLondonStationGroups, shortenLondonStationName, stripLondonDirectionSuffix } from './helpers/london-stations.mjs';
 import { describeLondonCrowding, selectLondonCrowdingReading } from './helpers/london-crowding.mjs';
 import { buildTflRequestUrls } from './helpers/tfl-request.mjs';
+import { buildServiceHistoryChart, describeServiceHistoryRow, formatServiceHours } from './helpers/london-service-history-chart.mjs';
 import { describeLondonStationFacilities } from './helpers/london-station-facilities.mjs';
 import { describeLondonStationStories } from './helpers/london-station-stories.mjs';
 import {
@@ -2604,11 +2605,40 @@ export default class extends Evented {
     setLondonStatusView(view) {
         const me = this;
 
-        me._londonStatusView = view === 'weekend' ? 'weekend' : 'now';
+        me._londonStatusView = view === 'weekend' || view === 'history' ? view : 'now';
         if (me._londonStatusView === 'weekend') {
             me.refreshLondonWeekendClosures();
         }
+        if (me._londonStatusView === 'history') {
+            me.refreshLondonServiceHistory();
+        }
         me.applyLondonClosureView();
+    }
+
+    async refreshLondonServiceHistory() {
+        const me = this;
+        const current = me._londonServiceHistory;
+
+        // The Worker records every five minutes; refetch after that, or 1 minute after an error.
+        if (current && (current.loading || Date.now() - current.fetchedAt < (current.error ? 60000 : 300000))) {
+            return;
+        }
+        me._londonServiceHistory = {data: current ? current.data : null, loading: true, error: null, fetchedAt: 0};
+        me.renderLondonStatusModal();
+
+        let next;
+        try {
+            // Same-origin Pages Function backed by D1; see functions/api/service-history.js.
+            const res = await fetch('/api/service-history?days=7');
+            if (!res.ok) {
+                throw Object.assign(new Error(`Service history ${res.status}`), {status: res.status});
+            }
+            next = {data: await res.json(), error: null};
+        } catch (error) {
+            next = {data: null, error};
+        }
+        me._londonServiceHistory = {...next, loading: false, fetchedAt: Date.now()};
+        me.renderLondonStatusModal();
     }
 
     applyLondonClosureView() {
@@ -3160,12 +3190,14 @@ export default class extends Evented {
             '<div class="london-card-eyebrow">Network-wide</div>',
             '<h2 id="london-status-title">Line Status</h2>',
             '<p class="london-status-updated">Live updates • Waiting for live data</p>',
+            '</div>',
+            '<button type="button" class="london-panel-close" aria-label="Close line status">×</button>',
+            '</div>',
+            // Outside the header so it can use the full width on phones.
             '<div class="london-status-view" role="group" aria-label="Status period">',
             '<button type="button" data-view="now" aria-pressed="true">Now</button>',
             '<button type="button" data-view="weekend" aria-pressed="false">This weekend</button>',
-            '</div>',
-            '</div>',
-            '<button type="button" class="london-panel-close" aria-label="Close line status">×</button>',
+            '<button type="button" data-view="history" aria-pressed="false">Past week</button>',
             '</div>',
             '<div class="london-status-dialog-body">',
             '<div class="london-status-summary-region"></div>',
@@ -3628,6 +3660,9 @@ export default class extends Evented {
         const trigger = me._londonUI.topbar.querySelector('.london-status-trigger');
 
         if (me._londonModalCoordinator.open('status', trigger)) {
+            if (me._londonStatusView === 'history') {
+                me.refreshLondonServiceHistory();
+            }
             me.renderLondonStatusModal();
         }
     }
@@ -3693,6 +3728,8 @@ export default class extends Evented {
         }
         if (me._londonStatusView === 'weekend') {
             me.renderLondonWeekendStatus(records);
+        } else if (me._londonStatusView === 'history') {
+            me.renderLondonHistoryStatus();
         } else {
             me.renderLondonNowStatus(records, updatedLabel);
         }
@@ -3748,6 +3785,67 @@ export default class extends Evented {
                 '</div>'
             ].join('');
         }).join('');
+    }
+
+    renderLondonHistoryStatus() {
+        const me = this;
+        const ui = me._londonUI;
+        const state = me._londonServiceHistory;
+        const chart = buildServiceHistoryChart(state && state.data, me.getLondonLineCatalog());
+        const formatTime = value => new Intl.DateTimeFormat(me.lang, {weekday: 'short', hour: '2-digit', minute: '2-digit'}).format(new Date(value));
+        // The Worker writes every five minutes; a gap of half an hour means it has stopped.
+        const stale = chart.lastSampleAt && Date.now() - chart.lastSampleAt > 1800000;
+
+        ui.statusUpdated.textContent = `Past 7 days${chart.lastSampleAt ? ` • to ${formatTime(chart.lastSampleAt)}` : ''}`;
+        ui.statusGrid.innerHTML = '';
+
+        if (!chart.rows.length) {
+            ui.statusSummary.innerHTML = `<div class="london-empty-state">${!state || state.loading ? 'Loading service history…' :
+                state.error && (state.error.status === 404 || state.error.status === 503) ? 'Service history is not available on this site yet.' :
+                state.error ? 'Service history could not be loaded. Try again in a minute.' :
+                'No service history has been recorded yet. It builds up every five minutes.'}</div>`;
+            return;
+        }
+
+        ui.statusSummary.innerHTML = [
+            '<div class="london-history-summary">',
+            chart.networkGoodPercent === null ? '' :
+                `<strong>${chart.networkGoodPercent}% of running time in good service</strong>`,
+            `<span>Across all tube lines, sampled from TfL every five minutes. Bars cover the ${escapeHTML(formatServiceHours(chart.scaleHours))} recorded so far.</span>`,
+            stale ? `<span class="london-history-stale">No new samples since ${escapeHTML(formatTime(chart.lastSampleAt))}.</span>` : '',
+            '</div>',
+            '<ul class="london-history-legend" aria-label="Legend">',
+            '<li><span class="london-history-key good" aria-hidden="true"></span>Good service</li>',
+            '<li><span class="london-history-key disrupted" aria-hidden="true"></span>Disrupted</li>',
+            '<li><span class="london-history-key closed" aria-hidden="true"></span>Not running</li>',
+            '</ul>'
+        ].join('');
+        ui.statusGrid.innerHTML = [
+            '<ul class="london-history-chart">',
+            chart.rows.map(row => {
+                const description = escapeHTML(describeServiceHistoryRow(row));
+                const segment = (kind, width) => width > 0 ? `<span class="london-history-segment ${kind}" style="width:${width}%;"></span>` : '';
+
+                return [
+                    '<li class="london-history-row">',
+                    '<div class="london-history-row-head">',
+                    `<span class="london-line-swatch" style="background-color:${escapeHTML(row.color)};" aria-hidden="true"></span>`,
+                    `<strong>${escapeHTML(row.title)}</strong>`,
+                    `<span class="london-history-value">${escapeHTML(formatServiceHours(row.goodHours))} good</span>`,
+                    '</div>',
+                    `<div class="london-history-bar" role="img" aria-label="${description}" title="${description}">`,
+                    segment('good', row.goodWidth),
+                    segment('disrupted', row.disruptedWidth),
+                    segment('closed', row.closedWidth),
+                    '</div>',
+                    `<span class="london-history-detail">${row.disruptedHours > 0 ?
+                        `${escapeHTML(formatServiceHours(row.disruptedHours))} disrupted • ${row.goodPercent}% of running time good` :
+                        row.goodPercent === null ? 'Not running' : 'No disruption recorded'}</span>`,
+                    '</li>'
+                ].join('');
+            }).join(''),
+            '</ul>'
+        ].join('');
     }
 
     renderLondonNowStatus(records, updatedLabel) {

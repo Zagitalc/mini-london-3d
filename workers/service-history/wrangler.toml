@@ -1,0 +1,27 @@
+# Scheduled Worker that records tube line status into D1 every five minutes.
+# Deployed separately from the Pages site: Pages Functions cannot run on a
+# cron schedule. See docs/DEPLOYMENT.md, "Service history".
+name = "mini-london-service-history"
+main = "src/index.mjs"
+compatibility_date = "2026-09-01"
+
+# No public URL: the Worker only runs on its schedule. The site reads the
+# data through the Pages Function at /api/service-history.
+workers_dev = false
+preview_urls = false
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "mini-london-service-history"
+# Paste the database_id printed by `npx wrangler d1 create mini-london-service-history`.
+database_id = "a91bddf7-c720-4321-95a8-506055e7131f"
+migrations_dir = "migrations"
+
+[observability]
+enabled = true
+
+# The TfL key is a Worker secret, never a var here:
+#   npx wrangler secret put TFL_APP_KEY

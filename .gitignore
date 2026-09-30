@@ -7,3 +7,4 @@ secrets
 .eslintcache
 public/config.local.js
 data-london/
+.wrangler
