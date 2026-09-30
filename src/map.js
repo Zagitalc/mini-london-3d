@@ -32,6 +32,7 @@ import { applyLondonStationGroups, shortenLondonStationName, stripLondonDirectio
 import { describeLondonCrowding, selectLondonCrowdingReading } from './helpers/london-crowding.mjs';
 import { buildTflRequestUrls } from './helpers/tfl-request.mjs';
 import { createDocumentVisibility, createPoller } from './helpers/london-poller.mjs';
+import { readTrainFeed, TRAIN_FEED_PATH } from './helpers/london-train-feed.mjs';
 import { buildServiceHistoryChart, describeServiceHistoryRow, formatServiceHours } from './helpers/london-service-history-chart.mjs';
 import { drawLondonPillImage, LONDON_PILL_MAX_LINES, LONDON_PILL_PIXEL_RATIO, londonPillImageExpression, londonPillImageId, londonStationSizeExpressions } from './helpers/london-station-style.mjs';
 import { londonBaseMapPaintUpdates, londonEmissiveUpdates, londonLightingTime, londonRailLineColourExpression } from './helpers/london-map-theme.mjs';
@@ -4982,31 +4983,8 @@ export default class extends Evented {
         const tick = async () => {
             try {
                 if (!lineIds.length) return;
-                const byLine = new Map();
-                const failed = [];
                 const pollTimestamp = Date.now();
-
-                await Promise.all(lineIds.map(async lid => {
-                    try {
-                        const arrivals = await me.fetchTfLJson(`/Line/${encodeURIComponent(lid)}/Arrivals`);
-                        byLine.set(lid, {
-                            arrivals: Array.isArray(arrivals) ? arrivals : [],
-                            success: true,
-                            observationsComplete: true
-                        });
-                    } catch (e) {
-                        failed.push(`${lid}: ${e.message}`);
-                        byLine.set(lid, {
-                            arrivals: [],
-                            success: false,
-                            observationsComplete: false
-                        });
-                    }
-                }));
-
-                if (failed.length) {
-                    console.warn('[London live trains] failed lines:', failed.join(' | '));
-                }
+                const byLine = await me.fetchLondonTrainPolls(lineIds);
 
                 for (const [lid, result] of byLine.entries()) {
                     const railways = me.getLondonRailwaysByLineId(lid);
@@ -5034,6 +5012,58 @@ export default class extends Evented {
         me._londonLiveTrainsPoller = me.createLondonPoller(tick, pollMs, 'live trains');
         me._londonLiveTrainsPoller.start();
         console.log(`[London live trains] polling TfL lines=${lineIds.join(',') || 'none'} every ${pollMs}ms`);
+    }
+
+    disableLondonTrainFeed() {
+        this._londonTrainFeedAvailable = false;
+    }
+
+    // Arrivals for the given lines: one request to the combined feed
+    // (functions/api/trains.js) when the site has it, otherwise one TfL
+    // request per line as before.
+    async fetchLondonTrainPolls(lineIds) {
+        const me = this;
+
+        if (me._londonTrainFeedAvailable !== false) {
+            try {
+                const res = await fetch(TRAIN_FEED_PATH);
+                if (res.ok) {
+                    return readTrainFeed(await res.json(), lineIds);
+                }
+                // No Functions here (for example `npm run serve`): stop asking.
+                if (res.status === 404) {
+                    me.disableLondonTrainFeed();
+                }
+            } catch (e) {
+                // Fall back to per-line requests for this poll.
+            }
+        }
+
+        const byLine = new Map();
+        const failed = [];
+
+        await Promise.all(lineIds.map(async lid => {
+            try {
+                const arrivals = await me.fetchTfLJson(`/Line/${encodeURIComponent(lid)}/Arrivals`);
+                byLine.set(lid, {
+                    arrivals: Array.isArray(arrivals) ? arrivals : [],
+                    success: true,
+                    observationsComplete: true
+                });
+            } catch (e) {
+                failed.push(`${lid}: ${e.message}`);
+                byLine.set(lid, {
+                    arrivals: [],
+                    success: false,
+                    observationsComplete: false
+                });
+            }
+        }));
+
+        if (failed.length) {
+            console.warn('[London live trains] failed lines:', failed.join(' | '));
+        }
+        return byLine;
     }
 
     async fetchTfLJson(path) {
