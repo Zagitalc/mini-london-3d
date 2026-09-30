@@ -5,6 +5,7 @@ import Pbf from 'pbf';
 import configs from './configs';
 import { isString, loadJSON, removePrefix } from './helpers/helpers';
 import { decode } from './helpers/helpers-gtfs';
+import { organiseLondonRailDisplayData } from './helpers/london-lane-order.mjs';
 
 const RAILWAYS_FOR_TRAINS = {
     odpt: [
@@ -118,7 +119,8 @@ export function loadStaticData(dataUrl, lang, clockPromise, city) {
             stationData,
             stationGroupData,
             featureCollection,
-            londonRailDisplayData,
+            // Keeps each line on the same side of shared-track bundles.
+            londonRailDisplayData: organiseLondonRailDisplayData(londonRailDisplayData, railwayData, stationGroupData),
             railDirectionData,
             trainTypeData,
             trainVehicleData,
