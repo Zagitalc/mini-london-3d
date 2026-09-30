@@ -31,6 +31,7 @@ import { getLondonStationAnchor } from './helpers/london-geometry.mjs';
 import { applyLondonStationGroups, shortenLondonStationName, stripLondonDirectionSuffix } from './helpers/london-stations.mjs';
 import { describeLondonCrowding, selectLondonCrowdingReading } from './helpers/london-crowding.mjs';
 import { buildTflRequestUrls } from './helpers/tfl-request.mjs';
+import { createDocumentVisibility, createPoller } from './helpers/london-poller.mjs';
 import { buildServiceHistoryChart, describeServiceHistoryRow, formatServiceHours } from './helpers/london-service-history-chart.mjs';
 import { drawLondonPillImage, LONDON_PILL_MAX_LINES, LONDON_PILL_PIXEL_RATIO, londonPillImageExpression, londonPillImageId, londonStationSizeExpressions } from './helpers/london-station-style.mjs';
 import { londonBaseMapPaintUpdates, londonEmissiveUpdates, londonLightingTime, londonRailLineColourExpression } from './helpers/london-map-theme.mjs';
@@ -2430,8 +2431,7 @@ export default class extends Evented {
             }
 
             if (hasActiveFilters && !lineIds.length) {
-                clearInterval(me._londonLiveTrainsTimer);
-                me._londonLiveTrainsTimer = null;
+                me.stopLondonLiveTrains();
             } else {
                 me.startLondonLiveTrains({
                     lineId: lineIds.length ? lineIds : null,
@@ -2631,12 +2631,24 @@ export default class extends Evented {
     startLondonLineStatusPolling({ pollMs = 60000 } = {}) {
         const me = this;
 
-        clearInterval(me._londonLineStatusTimer);
+        if (me._londonLineStatusPoller) {
+            me._londonLineStatusPoller.stop();
+        }
         me._londonLineStatusPollMs = pollMs;
-        me.refreshLondonLineStatuses();
-        me._londonLineStatusTimer = setInterval(() => {
-            me.refreshLondonLineStatuses();
-        }, pollMs);
+        me._londonLineStatusPoller = me.createLondonPoller(() => me.refreshLondonLineStatuses(), pollMs, 'line status');
+        me._londonLineStatusPoller.start();
+    }
+
+    // Polls one after another (never overlapping) and pauses while the tab is hidden.
+    createLondonPoller(task, intervalMs, label) {
+        const me = this;
+
+        me._londonVisibility = me._londonVisibility || createDocumentVisibility();
+        return createPoller(task, {
+            intervalMs,
+            visibility: me._londonVisibility,
+            onError: e => console.warn(`[London ${label}] poll failed:`, e)
+        });
     }
 
     initLondonTheme() {
@@ -2850,9 +2862,9 @@ export default class extends Evented {
     }
 
     stopLondonStationDrawerPolling() {
-        if (this._londonStationDrawerTimer) {
-            clearInterval(this._londonStationDrawerTimer);
-            this._londonStationDrawerTimer = null;
+        if (this._londonStationDrawerPoller) {
+            this._londonStationDrawerPoller.stop();
+            this._londonStationDrawerPoller = null;
         }
     }
 
@@ -2919,12 +2931,15 @@ export default class extends Evented {
         if (!resolvedSelection) {
             return;
         }
-        me.refreshLondonStationDrawerData(resolvedSelection);
-        me._londonStationDrawerTimer = setInterval(() => {
-            if (isStation(me.trackedObject)) {
-                me.refreshLondonStationDrawerData(resolvedSelection);
+        let first = true;
+        me._londonStationDrawerPoller = me.createLondonPoller(() => {
+            // The first load always runs; later ones only while a station is open.
+            if (first || isStation(me.trackedObject)) {
+                first = false;
+                return me.refreshLondonStationDrawerData(resolvedSelection);
             }
-        }, pollMs || me._londonStationDrawerPollMs);
+        }, pollMs || me._londonStationDrawerPollMs, 'station departures');
+        me._londonStationDrawerPoller.start();
     }
 
     getLondonStationDepartures(selection) {
@@ -4865,6 +4880,13 @@ export default class extends Evented {
             isValidLngLatLike(position.coord));
     }
 
+    stopLondonLiveTrains() {
+        if (this._londonLiveTrainsPoller) {
+            this._londonLiveTrainsPoller.stop();
+            this._londonLiveTrainsPoller = null;
+        }
+    }
+
     /**
      * London live trains (Path B MVP).
      * Uses TfL `/Line/{lineId}/Arrivals` predictions to render moving dots.
@@ -4877,10 +4899,7 @@ export default class extends Evented {
         const me = this;
         me._londonLiveTrainPollMs = pollMs;
 
-        if (me._londonLiveTrainsTimer) {
-            clearInterval(me._londonLiveTrainsTimer);
-            me._londonLiveTrainsTimer = null;
-        }
+        me.stopLondonLiveTrains();
 
         if (!me.map) {
             console.warn('[London live trains] missing map instance');
@@ -5012,8 +5031,8 @@ export default class extends Evented {
         };
 
         // Prime immediately, then poll.
-        tick();
-        me._londonLiveTrainsTimer = setInterval(tick, pollMs);
+        me._londonLiveTrainsPoller = me.createLondonPoller(tick, pollMs, 'live trains');
+        me._londonLiveTrainsPoller.start();
         console.log(`[London live trains] polling TfL lines=${lineIds.join(',') || 'none'} every ${pollMs}ms`);
     }
 
