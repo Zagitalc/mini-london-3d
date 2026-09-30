@@ -62,6 +62,16 @@ To enable it, add the rotated key as an encrypted Pages variable (Settings → V
 
 Without `TFL_APP_KEY` the function still works, but calls TfL anonymously and shares its rate limit across all visitors.
 
+### Combined live-train feed
+
+`functions/api/trains.js` serves `GET /api/trains`: arrival predictions for all eleven tube lines in one response, fetched with the same `TFL_APP_KEY` Pages secret as the proxy. Each open tab polls it every 10 seconds, instead of making eleven `/tfl/Line/{id}/Arrivals` requests.
+
+- Only the fields the live-train code reads are kept, which roughly halves the uncompressed size. Every prediction is kept.
+- Complete responses are shared from the edge cache for 10 seconds, so visitors served from the same Cloudflare location share one set of TfL requests. Partial failures are returned but not cached; a line that failed has `ok: false` and only its status code.
+- If the endpoint is missing (for example under `npm run serve`, which has no Functions), the map falls back to the per-line requests after its first 404.
+
+There is nothing to configure beyond the existing `TFL_APP_KEY` secret.
+
 ### Service history (scheduled Worker and D1)
 
 The Line Status panel's **Past week** view shows hours of good service per tube line. It has three parts:
