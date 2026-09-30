@@ -34,6 +34,7 @@ import { applyLondonStationGroups, shortenLondonStationName, stripLondonDirectio
 import { describeLondonCrowding, selectLondonCrowdingReading } from './helpers/london-crowding.mjs';
 import { buildTflRequestUrls } from './helpers/tfl-request.mjs';
 import { buildServiceHistoryChart, describeServiceHistoryRow, formatServiceHours } from './helpers/london-service-history-chart.mjs';
+import { londonBaseMapPaintUpdates, londonEmissiveUpdates, londonLightingTime, londonRailLineColourExpression } from './helpers/london-map-theme.mjs';
 import { describeLondonStationFacilities } from './helpers/london-station-facilities.mjs';
 import { describeLondonStationStories } from './helpers/london-station-stories.mjs';
 import {
@@ -263,6 +264,12 @@ NavigationControl.prototype.disable = function () {
 // quarter of their opacity and get a dashed overlay. Colour alone is not
 // enough: the Jubilee line is already grey.
 const LONDON_RAIL_CLOSED = ['boolean', ['get', 'closed'], false];
+
+// Tube lines and stations keep their exact colours whatever the lighting.
+const LONDON_OVERLAY_LAYER_IDS = [
+    'london-railways', 'london-railways-closed', 'london-station-pills',
+    'london-station-pills-outline', 'london-stations'
+];
 
 function fadeClosedLondonRail(opacity) {
     // Zoom interpolations must stay top-level, so the fade goes into each stop's output.
@@ -1294,7 +1301,7 @@ export default class extends Evented {
                 'sky-atmosphere-sun-intensity': 20
             }
         }, 'background');
-        helpersMapbox.setSunlight(map, clock.getTime());
+        me.setMapSunlight(clock.getTime());
 
         map.setLayoutProperty('poi', 'text-field', [
             'coalesce',
@@ -1465,6 +1472,7 @@ export default class extends Evented {
                 if (map.getLayer('london-station-pills')) map.moveLayer('london-station-pills');
                 if (map.getLayer('london-station-pills-outline')) map.moveLayer('london-station-pills-outline');
                 if (map.getLayer('london-stations')) map.moveLayer('london-stations');
+                me.applyLondonMapTheme();
             };
 
             try {
@@ -1906,7 +1914,7 @@ export default class extends Evented {
                         map.setLayoutProperty('london-3d-buildings', 'visibility', buildingVisibility);
                     }
 
-                    helpersMapbox.setSunlight(map, now);
+                    me.setMapSunlight(now);
                     if (me.searchMode === 'none' && me.clockMode === 'playback' && !me.removing) {
                         me.refreshTrains();
                         me.refreshFlights();
@@ -2704,6 +2712,62 @@ export default class extends Evented {
         }
         me.container.classList.toggle('london-theme-dark', me._londonTheme === 'dark');
         me.container.classList.toggle('london-theme-light', me._londonTheme !== 'dark');
+        me.applyLondonMapTheme();
+    }
+
+    // Repaints the base map and the tube lines for the current theme, in place,
+    // so the London layers on top are not rebuilt.
+    applyLondonMapTheme() {
+        const me = this;
+        const map = me.map;
+
+        if (!map || !me._londonTheme || me.getCityFromLocation() !== 'london') {
+            return;
+        }
+        let style;
+        try {
+            style = map.getStyle();
+        } catch (e) {
+            return;
+        }
+        if (!style) {
+            return;
+        }
+        const theme = me._londonTheme === 'dark' ? 'dark' : 'light';
+
+        me._londonBaseMapOriginals = me._londonBaseMapOriginals || new Map();
+        for (const [id, property, value] of [
+            ...londonBaseMapPaintUpdates(style.layers, theme, me._londonBaseMapOriginals),
+            ...londonEmissiveUpdates(style.layers, LONDON_OVERLAY_LAYER_IDS)
+        ]) {
+            try {
+                map.setPaintProperty(id, property, value);
+            } catch (e) {
+                // The layer went away with a style change; the next call catches up.
+            }
+        }
+        if (map.getLayer('london-railways')) {
+            map.setPaintProperty('london-railways', 'line-color', londonRailLineColourExpression(me.getLondonLineCatalog(), theme));
+        }
+        me.setMapSunlight(me.clock ? me.clock.getTime() : Date.now());
+    }
+
+    // In London the theme, not the clock, decides between day and night
+    // lighting; elsewhere the sun follows the clock as before.
+    setMapSunlight(time) {
+        const me = this;
+
+        if (!me.map) {
+            return;
+        }
+        if (me.getCityFromLocation() === 'london' && me._londonTheme) {
+            if (!me.map.getLayer('sky')) {
+                return;
+            }
+            helpersMapbox.setSunlight(me.map, londonLightingTime(me._londonTheme, time));
+        } else {
+            helpersMapbox.setSunlight(me.map, time);
+        }
     }
 
     toggleLondonTheme(forceTheme) {
@@ -6174,6 +6238,7 @@ export default class extends Evented {
                             }
                         }, 'trees');
                     }
+                    me.applyLondonMapTheme();
                 }
 
                 for (const key of ['busroute', 'busroute-highlighted']) {
