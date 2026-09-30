@@ -3789,6 +3789,8 @@ export default class extends Evented {
 
         ui.drawer.classList.toggle('open', !!selection);
         ui.drawer.setAttribute('aria-hidden', selection ? 'false' : 'true');
+        // On phones the drawer is a bottom sheet; CSS hides the map controls it would cover.
+        me.container.classList.toggle('london-drawer-open', !!selection);
         if (!selection) {
             me._londonStationDrawerSelection = null;
             return;
