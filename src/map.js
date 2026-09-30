@@ -32,6 +32,7 @@ import { applyLondonStationGroups, shortenLondonStationName, stripLondonDirectio
 import { describeLondonCrowding, selectLondonCrowdingReading } from './helpers/london-crowding.mjs';
 import { buildTflRequestUrls } from './helpers/tfl-request.mjs';
 import { createDocumentVisibility, createPoller } from './helpers/london-poller.mjs';
+import { slugifyIdentity } from './helpers/london-route-display.mjs';
 import { readTrainFeed, TRAIN_FEED_PATH } from './helpers/london-train-feed.mjs';
 import { buildServiceHistoryChart, describeServiceHistoryRow, formatServiceHours } from './helpers/london-service-history-chart.mjs';
 import { drawLondonPillImage, LONDON_PILL_MAX_LINES, LONDON_PILL_PIXEL_RATIO, londonPillImageExpression, londonPillImageId, londonStationSizeExpressions } from './helpers/london-station-style.mjs';
@@ -267,7 +268,8 @@ const LONDON_RAIL_CLOSED = ['boolean', ['get', 'closed'], false];
 
 // Tube lines and stations keep their exact colours whatever the lighting.
 const LONDON_OVERLAY_LAYER_IDS = [
-    'london-railways', 'london-railways-closed', 'london-station-pills', 'london-stations'
+    'london-railways', 'london-railways-closed', 'london-station-links-casing',
+    'london-station-links', 'london-station-pills', 'london-stations'
 ];
 
 function fadeClosedLondonRail(opacity) {
@@ -293,6 +295,37 @@ function londonClosedRailLayer(londonPaint) {
             'line-dasharray': [1.2, 1.2]
         }
     };
+}
+
+// Where one station's lines stop at different places (Baker Street's
+// sub-surface, Bakerloo and Jubilee platforms), white connectors join them.
+function londonStationLinkLayers(londonPaint) {
+    const filter = ['==', ['get', 'type'], 'station-link'];
+    const layout = {'line-cap': 'round', 'line-join': 'round'};
+
+    return [{
+        id: 'london-station-links-casing',
+        type: 'line',
+        source: 'london-rail',
+        filter,
+        layout,
+        paint: {
+            'line-color': '#1f2328',
+            'line-width': londonPaint.linkCasingWidth,
+            'line-opacity': londonPaint.stationOpacity
+        }
+    }, {
+        id: 'london-station-links',
+        type: 'line',
+        source: 'london-rail',
+        filter,
+        layout,
+        paint: {
+            'line-color': '#ffffff',
+            'line-width': londonPaint.linkWidth,
+            'line-opacity': londonPaint.stationOpacity
+        }
+    }];
 }
 
 // Interchanges: a white capsule icon of fixed screen size, rotated to the
@@ -559,6 +592,8 @@ export default class extends Evented {
             stationDotRadius: stationSizes.dotRadius,
             stationDotStrokeWidth: stationSizes.dotStrokeWidth,
             pillIconSize: stationSizes.pillIconSize,
+            linkWidth: stationSizes.linkWidth,
+            linkCasingWidth: stationSizes.linkCasingWidth,
             stationOpacity: [
                 'interpolate',
                 ['linear'],
@@ -1424,6 +1459,9 @@ export default class extends Evented {
                     map.addLayer(londonClosedRailLayer(londonPaint));
                 }
 
+                for (const layer of londonStationLinkLayers(londonPaint)) {
+                    if (!map.getLayer(layer.id)) map.addLayer(layer);
+                }
                 if (!map.getLayer('london-station-pills')) {
                     me.ensureLondonStationImages();
                     map.addLayer(londonStationPillLayer(londonPaint));
@@ -1447,6 +1485,8 @@ export default class extends Evented {
 
                 map.moveLayer('london-railways');
                 map.moveLayer('london-railways-closed');
+                if (map.getLayer('london-station-links-casing')) map.moveLayer('london-station-links-casing');
+                if (map.getLayer('london-station-links')) map.moveLayer('london-station-links');
                 if (map.getLayer('london-station-pills')) map.moveLayer('london-station-pills');
                 if (map.getLayer('london-stations')) map.moveLayer('london-stations');
                 me.applyLondonMapTheme();
@@ -1744,7 +1784,7 @@ export default class extends Evented {
             if (me.getCityFromLocation() !== 'london') {
                 return null;
             }
-            const hitLayers = ['london-stations', 'london-station-pills']
+            const hitLayers = ['london-stations', 'london-station-pills', 'london-station-links']
                 .filter(id => map.getLayer(id));
             if (!hitLayers.length) {
                 return null;
@@ -1758,7 +1798,7 @@ export default class extends Evented {
 
         map.on('mousemove', e => {
             if (me.getCityFromLocation() === 'london') {
-                const hoverLayers = ['london-stations', 'london-station-pills']
+                const hoverLayers = ['london-stations', 'london-station-pills', 'london-station-links']
                     .filter(id => map.getLayer(id));
                 if (hoverLayers.length) {
                     const stationHoverHit = map.queryRenderedFeatures(e.point, {
@@ -2142,18 +2182,54 @@ export default class extends Evented {
                 shape: interchange ? 'pill' : 'dot'
             };
 
-            if (interchange) {
-                // Drawn as a rotated icon of fixed screen size (london-station-pills).
-                properties.bearing = inferBearing(center, lines);
+            // Platform points where each line actually stops (london-station-platforms.mjs).
+            const platforms = me.londonRailDisplayData && me.londonRailDisplayData.platforms &&
+                me.londonRailDisplayData.platforms[slugifyIdentity(entry.group)];
+
+            if (platforms && platforms.points.length) {
+                for (const point of platforms.points) {
+                    const shared = point.lineIds.length >= 2;
+                    fc.features.push({
+                        type: 'Feature',
+                        geometry: {type: 'Point', coordinates: point.coord},
+                        properties: {
+                            ...properties,
+                            shape: shared ? 'pill' : 'dot',
+                            lineCount: point.lineIds.length,
+                            // Only this platform's lines, so the line filter hides it on its own.
+                            lineIds: point.lineIds,
+                            // A pill lies across the lanes of the bundle it marks.
+                            ...(shared ? {bearing: Number.isFinite(point.bearing) ? point.bearing + 90 : inferBearing(point.coord, lines)} : {})
+                        }
+                    });
+                }
+                for (const [i, j] of platforms.links) {
+                    fc.features.push({
+                        type: 'Feature',
+                        geometry: {type: 'LineString', coordinates: [platforms.points[i].coord, platforms.points[j].coord]},
+                        properties: {
+                            ...properties,
+                            type: 'station-link',
+                            shape: 'link',
+                            fromLineIds: platforms.points[i].lineIds,
+                            toLineIds: platforms.points[j].lineIds
+                        }
+                    });
+                }
+            } else {
+                if (interchange) {
+                    // Drawn as a rotated icon of fixed screen size (london-station-pills).
+                    properties.bearing = inferBearing(center, lines);
+                }
+                fc.features.push({
+                    type: 'Feature',
+                    geometry: {
+                        type: 'Point',
+                        coordinates: center
+                    },
+                    properties
+                });
             }
-            fc.features.push({
-                type: 'Feature',
-                geometry: {
-                    type: 'Point',
-                    coordinates: center
-                },
-                properties
-            });
 
             popupLookup.set(entry.group, {
                 title,
@@ -2354,9 +2430,13 @@ export default class extends Evented {
             if (props.type === 'railway') {
                 return filters.has(getLondonLineKey(props.lineId || props.railwayId));
             }
+            const shown = lineIds => (Array.isArray(lineIds) ? lineIds : []).some(lineId => filters.has(getLondonLineKey(lineId)));
             if (props.type === 'station') {
-                const lineIds = Array.isArray(props.lineIds) ? props.lineIds : [];
-                return lineIds.some(lineId => filters.has(getLondonLineKey(lineId)));
+                return shown(props.lineIds);
+            }
+            if (props.type === 'station-link') {
+                // Only while both platforms it joins are visible.
+                return shown(props.fromLineIds) && shown(props.toLineIds);
             }
             return true;
         });
@@ -4749,7 +4829,7 @@ export default class extends Evented {
         };
 
         if (!me._londonHoverStationsBound) {
-            const stationLayers = ['london-stations', 'london-station-pills'];
+            const stationLayers = ['london-stations', 'london-station-pills', 'london-station-links'];
             let boundAny = false;
             for (const layerId of stationLayers) {
                 if (!map.getLayer(layerId)) continue;
@@ -6203,6 +6283,9 @@ export default class extends Evented {
                     }
                     if (!map.getLayer('london-railways-closed')) {
                         map.addLayer(londonClosedRailLayer(londonPaint), 'trees');
+                    }
+                    for (const layer of londonStationLinkLayers(londonPaint)) {
+                        if (!map.getLayer(layer.id)) map.addLayer(layer, 'trees');
                     }
                     if (!map.getLayer('london-station-pills')) {
                         me.ensureLondonStationImages();

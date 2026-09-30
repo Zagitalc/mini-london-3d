@@ -6,6 +6,7 @@ import configs from './configs';
 import { isString, loadJSON, removePrefix } from './helpers/helpers';
 import { decode } from './helpers/helpers-gtfs';
 import { organiseLondonRailDisplayData } from './helpers/london-lane-order.mjs';
+import { withLondonPlatforms } from './helpers/london-station-platforms.mjs';
 
 const RAILWAYS_FOR_TRAINS = {
     odpt: [
@@ -119,8 +120,9 @@ export function loadStaticData(dataUrl, lang, clockPromise, city) {
             stationData,
             stationGroupData,
             featureCollection,
-            // Keeps each line on the same side of shared-track bundles.
-            londonRailDisplayData: organiseLondonRailDisplayData(londonRailDisplayData, railwayData, stationGroupData),
+            // Keeps each line on the same side of shared-track bundles, and on
+            // its own track at interchanges.
+            londonRailDisplayData: withLondonPlatforms(organiseLondonRailDisplayData(londonRailDisplayData, railwayData, stationGroupData)),
             railDirectionData,
             trainTypeData,
             trainVehicleData,

@@ -22,6 +22,8 @@ const DOT_STROKE = 1.8;
 const PILL_HEIGHT = 14;
 const PILL_LENGTH_PER_LINE = 10;
 const PILL_STROKE = 2;
+const LINK_WIDTH = 5;
+const LINK_CASING = 1.6;
 // Icons are drawn at this density so they stay sharp when scaled up.
 export const LONDON_PILL_PIXEL_RATIO = 3;
 export const LONDON_PILL_MAX_LINES = 6;
@@ -32,13 +34,16 @@ function scaled(base, minimum = 0) {
 
 /**
  * Zoom expressions for station sizes.
- * @returns {Object} Dot radius and stroke width, and the pill icon size, as Mapbox expressions.
+ * @returns {Object} Dot radius and stroke width, pill icon size and connector widths, as Mapbox expressions.
  */
 export function londonStationSizeExpressions() {
     return {
         dotRadius: scaled(DOT_RADIUS),
         dotStrokeWidth: scaled(DOT_STROKE, 0.4),
-        pillIconSize: scaled(1)
+        pillIconSize: scaled(1),
+        // Connectors between platform points of one station.
+        linkWidth: scaled(LINK_WIDTH, 1),
+        linkCasingWidth: scaled(LINK_WIDTH + 2 * LINK_CASING, 2)
     };
 }
 
