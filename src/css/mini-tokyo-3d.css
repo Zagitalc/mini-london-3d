@@ -1840,7 +1840,9 @@
     gap: 10px;
 }
 .mini-tokyo-3d.is-london .london-status-view {
-    margin-top: 12px;
+    align-self: flex-start;
+    flex: none;
+    margin-top: -4px;
     padding: 3px;
     display: inline-flex;
     gap: 2px;
@@ -1859,6 +1861,7 @@
     color: var(--london-muted);
     background: transparent;
     cursor: pointer;
+    white-space: nowrap;
 }
 .mini-tokyo-3d.is-london .london-status-view button[aria-pressed="true"] {
     color: var(--london-blue);
@@ -1879,6 +1882,136 @@
 }
 .mini-tokyo-3d.is-london .london-closure-unplaced {
     font-style: italic;
+}
+
+/* Past week: hours of good service per line. Green and amber differ enough
+   in lightness for red-green colour blindness; the hatching, the legend and
+   the text under each bar carry the same information. */
+.mini-tokyo-3d.is-london {
+    --london-history-good: #15803d;
+    --london-history-disrupted: #f59e0b;
+    --london-history-closed: #c9c9c4;
+    --london-history-track: rgba(0, 0, 0, 0.05);
+}
+.mini-tokyo-3d.is-london.london-theme-dark {
+    --london-history-closed: #3b4a6b;
+    --london-history-track: rgba(255, 255, 255, 0.05);
+}
+.mini-tokyo-3d.is-london .london-history-summary {
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    border: 1px solid var(--london-border);
+    border-radius: 16px;
+    background: var(--london-card-bg);
+    color: var(--london-muted);
+    font-size: 13px;
+    line-height: 1.45;
+}
+.mini-tokyo-3d.is-london .london-history-summary strong {
+    color: var(--london-text);
+    font-size: 15px;
+}
+.mini-tokyo-3d.is-london .london-history-stale {
+    color: var(--london-text);
+    font-weight: 600;
+}
+.mini-tokyo-3d.is-london .london-history-legend {
+    margin: 12px 0 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+    list-style: none;
+    color: var(--london-muted);
+    font-size: 13px;
+}
+.mini-tokyo-3d.is-london .london-history-legend li {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.mini-tokyo-3d.is-london .london-history-key {
+    width: 14px;
+    height: 10px;
+    border-radius: 2px;
+}
+.mini-tokyo-3d.is-london .london-history-chart {
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    list-style: none;
+}
+.mini-tokyo-3d.is-london .london-history-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.mini-tokyo-3d.is-london .london-history-row-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+.mini-tokyo-3d.is-london .london-history-row-head strong {
+    flex: 1;
+    min-width: 0;
+    color: var(--london-text);
+    font-size: 14px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mini-tokyo-3d.is-london .london-history-value {
+    color: var(--london-text);
+    font-size: 13px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.mini-tokyo-3d.is-london .london-history-bar {
+    height: 12px;
+    display: flex;
+    gap: 2px;
+    border-radius: 0 4px 4px 0;
+    background: var(--london-history-track);
+}
+.mini-tokyo-3d.is-london .london-history-segment {
+    flex: none;
+    min-width: 2px;
+}
+.mini-tokyo-3d.is-london .london-history-segment:last-child {
+    border-radius: 0 4px 4px 0;
+}
+.mini-tokyo-3d.is-london .london-history-segment.good,
+.mini-tokyo-3d.is-london .london-history-key.good {
+    background: var(--london-history-good);
+}
+.mini-tokyo-3d.is-london .london-history-segment.disrupted,
+.mini-tokyo-3d.is-london .london-history-key.disrupted {
+    background: var(--london-history-disrupted) repeating-linear-gradient(135deg, rgba(0, 0, 0, 0.28) 0 2px, transparent 2px 5px);
+}
+.mini-tokyo-3d.is-london .london-history-segment.closed,
+.mini-tokyo-3d.is-london .london-history-key.closed {
+    background: var(--london-history-closed);
+}
+.mini-tokyo-3d.is-london .london-history-detail {
+    color: var(--london-muted);
+    font-size: 12px;
+}
+.mini-tokyo-3d.is-london.london-theme-dark .london-history-detail,
+.mini-tokyo-3d.is-london.london-theme-dark .london-history-summary span {
+    color: var(--london-status-body);
+}
+@media (forced-colors: active) {
+    .mini-tokyo-3d.is-london .london-history-segment,
+    .mini-tokyo-3d.is-london .london-history-key {
+        forced-color-adjust: none;
+        border: 1px solid CanvasText;
+    }
 }
 .mini-tokyo-3d.is-london .london-status-card {
     display: flex;
@@ -2465,6 +2598,17 @@
     }
     .mini-tokyo-3d.is-london .london-primary-button {
         min-height: 44px;
+    }
+
+    /* Now / This weekend / Past week share one full-width row at 360 px. */
+    .mini-tokyo-3d.is-london .london-status-view {
+        align-self: stretch;
+        display: flex;
+    }
+    .mini-tokyo-3d.is-london .london-status-view button {
+        flex: 1 1 auto;
+        min-height: 40px;
+        padding: 0 8px;
     }
 }
 

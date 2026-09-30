@@ -8,10 +8,11 @@ const STATUS_MODES = new Set(['tube']);
 const LINE_ID = /^[a-z][a-z-]{1,31}$/;
 const STOP_POINT_ID = /^[0-9A-Za-z]{4,20}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
-const TUBE_LINES = new Set([
+export const TFL_TUBE_LINE_IDS = [
     'bakerloo', 'central', 'circle', 'district', 'hammersmith-city', 'jubilee',
     'metropolitan', 'northern', 'piccadilly', 'victoria', 'waterloo-city'
-]);
+];
+const TUBE_LINES = new Set(TFL_TUBE_LINE_IDS);
 
 // Each rule matches the path segments after /tfl and gives the edge cache TTL.
 // `query` is fixed server-side; client query strings are never forwarded.

@@ -62,6 +62,42 @@ To enable it, add the rotated key as an encrypted Pages variable (Settings → V
 
 Without `TFL_APP_KEY` the function still works, but calls TfL anonymously and shares its rate limit across all visitors.
 
+### Service history (scheduled Worker and D1)
+
+The Line Status panel's **Past week** view shows hours of good service per tube line. It has three parts:
+
+- `workers/service-history/`: a separate Worker, deployed with `wrangler`, that runs every five minutes (`*/5 * * * *`), fetches `/Line/Mode/tube/Status` from TfL with its own `TFL_APP_KEY` secret, and writes one sample per line into the D1 database `mini-london-service-history`. Pages Functions cannot run on a schedule, which is why this is not part of the Pages project. It has no public URL (`workers_dev = false`).
+- `functions/api/service-history.js`: a Pages Function serving `GET /api/service-history?days=7` (1 to 31 days, default 7) from the same database through the Pages D1 binding `DB`. It only reads.
+- The D1 schema in `workers/service-history/migrations/`. `status_samples` holds the raw five-minute samples and is pruned after 90 days; `daily_line_service` holds per-day totals, recomputed after every run, and is kept.
+
+A sample is *good* for TfL severities 10 (Good Service), 18 (No Issues) and 19 (Information), *not running* for 20 (Service Closed), and *disrupted* for anything else, including planned closures. When TfL reports several statuses for a line, the worst one counts. Days are London calendar days. A run that fails (TfL error or timeout) is simply missing; nothing is interpolated.
+
+TfL error bodies can echo the request URI, key included, so the Worker only ever reports the status code.
+
+Free-plan usage is small: fewer than 10,000 D1 rows written and about 460,000 read per day by the Worker (the free limits are 100,000 and 5 million), one cron trigger, and at most 11 rows read per day requested by the endpoint, whose responses browsers cache for five minutes.
+
+#### Setting it up
+
+Run these on a machine with Node.js, from the repository root. `npx wrangler@4` avoids adding wrangler to `package.json`.
+
+1. Log in: `npx wrangler@4 login` (opens the browser; approve the Cloudflare account that owns the Pages project).
+2. Create the database: `npx wrangler@4 d1 create mini-london-service-history`. Copy the `database_id` it prints into `workers/service-history/wrangler.toml` in place of `REPLACE_WITH_DATABASE_ID`, and commit that change. If wrangler offers to add the binding to a config file for you, decline: the file already has it.
+3. Create the tables: `cd workers/service-history && npx wrangler@4 d1 migrations apply mini-london-service-history --remote`.
+4. Add the TfL key as a Worker secret (still in `workers/service-history`): `npx wrangler@4 secret put TFL_APP_KEY`, then paste the key at the prompt. It can be the same rotated key as the Pages secret or a separate TfL app key. Never add it to `wrangler.toml` as a `var`.
+   On the very first deploy wrangler may say the Worker does not exist yet and offer to create it; accept, or run step 5 first and repeat this step.
+5. Deploy the Worker: `npx wrangler@4 deploy`. The output should list the cron `*/5 * * * *` and the `env.DB` binding.
+6. Bind the database to the Pages project: Cloudflare dashboard → Workers & Pages → the Pages project → Settings → Bindings → Add → D1 database. Variable name `DB`, database `mini-london-service-history`. Add it for both Production and Preview.
+7. Redeploy the Pages project (Deployments → latest production deployment → ⋯ → Retry deployment, or push to `master`). Bindings only apply to new deployments.
+
+#### Checking it works
+
+- After ten minutes: `npx wrangler@4 d1 execute mini-london-service-history --remote --command "SELECT day, line_id, good_samples, disrupted_samples, closed_samples FROM daily_line_service ORDER BY day DESC, line_id"` (from `workers/service-history`) should show eleven lines with a couple of samples each.
+- The Worker's page in the dashboard (Workers & Pages → `mini-london-service-history`; the cron schedule is under Settings, and runs and errors appear under Logs/Observability) lists each cron run and any failures. `npx wrangler@4 tail` streams them live.
+- `https://<your site>/api/service-history?days=7` should return JSON with a `lines` array. `{"error":"not_configured"}` with status 503 means the Pages binding `DB` is missing or the project has not been redeployed since it was added.
+- The Past week view says "Service history is not available on this site yet" while the endpoint returns 404 or 503 (for example under `npm run serve`, which has no Functions), and "No service history has been recorded yet" until the first run lands.
+
+To stop collecting, remove the cron trigger in the Worker's settings or delete the Worker; the data stays in D1 until the database is deleted.
+
 ### Build acceptance
 
 Run the normal build locally, then generate a placeholder runtime config without using a real token:
