@@ -2467,3 +2467,16 @@
         min-height: 44px;
     }
 }
+
+/* The clock and zoom controls otherwise peek out above the open bottom-sheet drawer. */
+.mini-tokyo-3d.is-london .mapboxgl-ctrl-top-left,
+.mini-tokyo-3d.is-london .mapboxgl-ctrl-top-right {
+    transition: opacity .2s ease, visibility .2s ease;
+}
+@media (max-width: 960px) {
+    .mini-tokyo-3d.is-london.london-drawer-open .mapboxgl-ctrl-top-left,
+    .mini-tokyo-3d.is-london.london-drawer-open .mapboxgl-ctrl-top-right {
+        opacity: 0;
+        visibility: hidden;
+    }
+}
