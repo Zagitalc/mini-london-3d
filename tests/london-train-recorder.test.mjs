@@ -62,15 +62,18 @@ test('summariseTrainRecording finds rebinds, turns, backward moves, jumps and re
             rendered('a', state({sectionProgress: 0.1}), state({sectionProgress: 0.2}), {drawnDirection: 'descending'}),
             rendered('c', state({state: 'expired'}), state()),
             rendered('d', state(), state({routeId: 'tfl.victoria.2'}), {command: 'rebind', drawnDirection: 'descending'}),
-            {trainKey: 'e', kind: 'discard', previousState: state(), nextState: null}
+            {trainKey: 'e', kind: 'discard', previousState: state(), nextState: null},
+            // Leaving a platform: a jump along the next section is flagged, a clean start is not.
+            rendered('f', state({state: 'dwelling', sectionProgress: 0.99}), state({sectionProgress: 0.4}), {progress: 0.4}),
+            rendered('g', state({state: 'dwelling', sectionProgress: 0.99}), state({sectionProgress: 0}), {progress: 0})
         ])
     ]});
 
     assert.deepEqual(summary.counts, {
-        polls: 3, decisions: 8, rebinds: 1, directionFlips: 1, backwardMoves: 1, multiSectionJumps: 1, reappeared: 1, discarded: 1
+        polls: 3, decisions: 10, rebinds: 1, directionFlips: 1, backwardMoves: 1, departureJumps: 1, multiSectionJumps: 1, reappeared: 1, discarded: 1
     });
     assert.deepEqual(summary.examples.map(example => `${example.kind}:${example.trainKey}`).sort(), [
-        'backward-move:a', 'direction-flip:a', 'discard:e', 'multi-section-jump:b', 'reappeared:c', 'rebind:d'
+        'backward-move:a', 'departure-jump:f', 'direction-flip:a', 'discard:e', 'multi-section-jump:b', 'reappeared:c', 'rebind:d'
     ]);
     assert.equal(summary.examples.find(example => example.kind === 'rebind').to, 'tfl.victoria.2');
     assert.deepEqual(summariseTrainRecording(null).counts.polls, 0);

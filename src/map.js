@@ -27,6 +27,7 @@ import {
 import { matchObservationsToTrainStates } from './helpers/london-live-train-identity.mjs';
 import { normalizeTfLObservations } from './helpers/london-live-train-observations.mjs';
 import { deriveRendererCommand, DWELL_MIN_MS, transitionTrainState } from './helpers/london-live-train-state.mjs';
+import { londonDepartureTiming, londonTrainFacing } from './helpers/london-live-train-motion.mjs';
 import { getLondonStationAnchor } from './helpers/london-geometry.mjs';
 import { applyLondonStationGroups, shortenLondonStationName, stripLondonDirectionSuffix } from './helpers/london-stations.mjs';
 import { describeLondonCrowding, selectLondonCrowdingReading } from './helpers/london-crowding.mjs';
@@ -4418,7 +4419,8 @@ export default class extends Evented {
                 predictions,
                 prevIndex !== undefined ? prevIndex : currentIndex,
                 nextIndexHint,
-                train && train.sectionLength
+                // While dwelling the section length is zero; fall back to the way it was facing.
+                train && (train.sectionLength || train._londonFacing)
             ) || 1;
             const next = selectLondonNextPrediction({
                 predictions,
@@ -4435,6 +4437,9 @@ export default class extends Evented {
                 continue;
             }
             let nextIndex = next.stationIndex;
+            // Where it goes next from the station it is at, before the dwell
+            // logic below collapses the section to that station.
+            const headingStep = currentIndex !== undefined ? Math.sign(next.stationIndex - currentIndex) : 0;
             const validatedDeparture = isAtStation && previousState && previousState.state === 'dwelling' &&
                 pollTimestamp - previousState.enteredStationAt >= DWELL_MIN_MS &&
                 nextIndex !== currentIndex && Math.abs(nextIndex - currentIndex) === 1;
@@ -4556,7 +4561,7 @@ export default class extends Evented {
                 continue; // Cannot proceed without a valid duration
             }
 
-            const duration = durationSec * 1000;
+            let duration = durationSec * 1000;
             let nextOffset = nowOffset + next.timeToStation * 1000;
             let startOffset = nextOffset - duration;
 
@@ -4574,6 +4579,18 @@ export default class extends Evented {
                         startOffset = nextOffset - duration;
                     }
                 }
+            }
+
+            // Leaving the platform (on the dwell timer, or because TfL no longer
+            // says "At ..."): start from the station now and arrive on time,
+            // rather than jumping to where a train that left earlier would be.
+            const departing = validatedDeparture || (!isAtStation && !!previousState && previousState.state === 'dwelling');
+            if (departing) {
+                const departure = londonDepartureTiming({nowOffset, timeToStation: next.timeToStation});
+                startOffset = departure.startOffset;
+                nextOffset = departure.endOffset;
+                duration = departure.duration;
+                durationSec = duration / 1000;
             }
 
             // This is the new time-based progress calculation
@@ -4604,9 +4621,11 @@ export default class extends Evented {
                 sectionIndex: prevIndex,
                 sectionProgress: progress,
                 atStation: isAtStation,
-                validatedDeparture,
+                // Tells the state machine this is a departure, so starting the next
+                // section from 0 is not treated as a backward move and clamped.
+                validatedDeparture: departing,
                 hasProgressionEvidence: !isAtStation && !!previousState && (
-                    validatedDeparture ||
+                    departing ||
                     previousState.sectionIndex !== prevIndex ||
                     progress > (previousState.sectionProgress || 0) + 0.001
                 ),
@@ -4699,14 +4718,17 @@ export default class extends Evented {
             train.platformName = next.platformName || '';
             train._tflPrevTime = isFinite(prevEpoch) ? prevEpoch : undefined;
             train._tflNextTime = isFinite(nextEpoch) ? nextEpoch : undefined;
-            train.d = sectionLength >= 0 ? railway.ascending : railway.descending;
+            // At a station the section has no length; keep facing the way it is going.
+            const facing = londonTrainFacing(sectionLength, headingStep, train._londonFacing, directionStep);
+            train._londonFacing = facing;
+            train.d = facing >= 0 ? railway.ascending : railway.descending;
             train._londonLineId = getLondonLineKey(railway.lineId || railway.id);
             train._londonStandingHint = isAtStation;
             record({
                 ...decision,
                 kind: 'rendered',
                 drawnRoute: railway.id,
-                drawnDirection: sectionLength >= 0 ? 'ascending' : 'descending',
+                drawnDirection: facing >= 0 ? 'ascending' : 'descending',
                 progress,
                 timeToStation: next.timeToStation
             });
