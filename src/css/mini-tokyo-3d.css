@@ -2621,3 +2621,46 @@
         visibility: hidden;
     }
 }
+
+/* ?record=trains: small recorder controls, above the Mapbox logo. */
+.mini-tokyo-3d.is-london.is-recording-trains .london-search-panel {
+    /* Reserve room for the recorder, including when its controls wrap. */
+    max-height: calc(100dvh - 244px);
+}
+.mini-tokyo-3d.is-london .london-train-recorder {
+    position: absolute;
+    left: max(10px, env(safe-area-inset-left));
+    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 34px);
+    z-index: 5;
+    display: flex;
+    flex-wrap: wrap;
+    box-sizing: border-box;
+    max-width: calc(100% - max(10px, env(safe-area-inset-left)) - max(10px, env(safe-area-inset-right)));
+    align-items: center;
+    gap: 8px;
+    padding: 6px 6px 6px 12px;
+    border: 1px solid var(--london-border);
+    border-radius: 999px;
+    background: var(--london-surface-strong);
+    box-shadow: var(--london-shadow);
+    color: var(--london-text);
+    font-size: 13px;
+}
+.mini-tokyo-3d.is-london .london-train-recorder-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #dc2626;
+    flex: none;
+}
+.mini-tokyo-3d.is-london .london-train-recorder button {
+    min-height: 32px;
+    padding: 0 12px;
+    border: 1px solid var(--london-border);
+    border-radius: 999px;
+    background: var(--london-card-bg);
+    color: var(--london-text);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}

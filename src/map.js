@@ -34,6 +34,7 @@ import { buildTflRequestUrls } from './helpers/tfl-request.mjs';
 import { createDocumentVisibility, createPoller } from './helpers/london-poller.mjs';
 import { slugifyIdentity } from './helpers/london-route-display.mjs';
 import { readTrainFeed, TRAIN_FEED_PATH } from './helpers/london-train-feed.mjs';
+import { createTrainRecorder } from './helpers/london-train-recorder.mjs';
 import { buildServiceHistoryChart, describeServiceHistoryRow, formatServiceHours } from './helpers/london-service-history-chart.mjs';
 import { drawLondonPillImage, LONDON_PILL_MAX_LINES, LONDON_PILL_PIXEL_RATIO, londonPillImageExpression, londonPillImageId, londonStationSizeExpressions } from './helpers/london-station-style.mjs';
 import { londonBaseMapPaintUpdates, londonEmissiveUpdates, londonLightingTime, londonRailLineColourExpression } from './helpers/london-map-theme.mjs';
@@ -3395,6 +3396,7 @@ export default class extends Evented {
         });
 
         me.initLondonTheme();
+        me.initLondonTrainRecorder();
 
         me._londonSearchPanelOpen = typeof window !== 'undefined' ?
             !window.matchMedia('(max-width: 960px)').matches :
@@ -4231,10 +4233,15 @@ export default class extends Evented {
         const seen = new Set();
         const resolveStationInfo = (value, stationIndexLookup) =>
             me.resolveLondonStationInfo(value, stationLookup, stationNameKeys, stationIndexLookup);
+        // ?record=trains: note what happened to each train in this poll.
+        const record = me._londonTrainRecorder ?
+            decision => me._londonTrainRecorder.recordDecision(pollTimestamp, {lineId: lineKey, ...decision}) :
+            () => {};
         const discardTrain = train => {
             if (!train) return false;
             const trainKey = train.id || train.key;
             const state = me._londonLiveTrainStates.get(trainKey);
+            record({trainKey, kind: 'discard', previousState: state, nextState: null});
 
             seen.add(trainKey);
             if (state) {
@@ -4626,8 +4633,17 @@ export default class extends Evented {
 
             me._londonLiveTrainStates.set(t.key, nextState);
             seen.add(t.key);
+            const decision = {
+                trainKey: t.key,
+                vehicleId: t.vehicleId,
+                previousState,
+                nextState,
+                command: rendererCommand.type,
+                diagnostics: transition.diagnostics
+            };
 
             if (nextState.state === 'expired') {
+                record({...decision, kind: 'expired'});
                 if (train) {
                     me.removeLondonLiveTrafficTrain(train);
                 }
@@ -4638,6 +4654,7 @@ export default class extends Evented {
             // shared boundary. Keep the existing renderer binding untouched.
             if (nextState.routeId !== railway.id ||
                 transition.diagnostics.includes('jump-multiple-sections')) {
+                record({...decision, kind: 'deferred', candidateRoute: railway.id});
                 continue;
             }
 
@@ -4685,6 +4702,14 @@ export default class extends Evented {
             train.d = sectionLength >= 0 ? railway.ascending : railway.descending;
             train._londonLineId = getLondonLineKey(railway.lineId || railway.id);
             train._londonStandingHint = isAtStation;
+            record({
+                ...decision,
+                kind: 'rendered',
+                drawnRoute: railway.id,
+                drawnDirection: sectionLength >= 0 ? 'ascending' : 'descending',
+                progress,
+                timeToStation: next.timeToStation
+            });
 
             if (train.instanceID === undefined) {
                 me.trafficLayer.addObject(train);
@@ -4755,6 +4780,7 @@ export default class extends Evented {
 
             me._londonLiveTrainStates.set(trainKey, nextState);
             seen.add(trainKey);
+            record({trainKey, kind: 'unmatched', previousState, nextState, diagnostics: transition.diagnostics});
             if (!train) continue;
 
             if (nextState.stalePhase === 'freeze' && previousState.stalePhase !== 'freeze') {
@@ -4961,6 +4987,84 @@ export default class extends Evented {
             isValidLngLatLike(position.coord));
     }
 
+    // ?record=trains: keep the last ten minutes of live-train polls and
+    // decisions, with Mark and Save controls, for diagnosing jumps offline.
+    initLondonTrainRecorder() {
+        const me = this;
+
+        if (me._londonTrainRecorder || typeof window === 'undefined' ||
+            !/(?:^|[?&])record=trains(?:&|$)/.test(window.location.search)) {
+            return;
+        }
+        me._londonTrainRecorder = createTrainRecorder();
+        me.container.classList.add('is-recording-trains');
+        document.addEventListener('visibilitychange', () => {
+            me._londonTrainRecorder.recordEvent(document.hidden ? 'hidden' : 'visible');
+        });
+
+        const panel = helpers.createElement('div', {className: 'london-train-recorder'}, me.container);
+        panel.innerHTML = [
+            '<span class="london-train-recorder-dot" aria-hidden="true"></span>',
+            '<span class="london-train-recorder-status" aria-live="polite">Recording trains</span>',
+            '<button type="button" data-action="mark" title="Mark the moment something looks wrong (M)">Mark</button>',
+            '<button type="button" data-action="save">Save</button>'
+        ].join('');
+        me._londonUI.trainRecorder = panel;
+        panel.querySelector('[data-action="mark"]').addEventListener('click', () => me.markLondonTrainRecording());
+        panel.querySelector('[data-action="save"]').addEventListener('click', () => me.saveLondonTrainRecording());
+        document.addEventListener('keydown', event => {
+            const target = event.target;
+            const typing = target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
+            if (!typing && !event.metaKey && !event.ctrlKey && !event.altKey && (event.key === 'm' || event.key === 'M')) {
+                me.markLondonTrainRecording();
+            }
+        });
+        me.renderLondonTrainRecorder();
+    }
+
+    markLondonTrainRecording() {
+        const me = this;
+        const recorder = me._londonTrainRecorder;
+
+        if (!recorder) return;
+        const tracked = me.trackedObject;
+        const center = me.map ? me.map.getCenter() : null;
+        recorder.recordEvent('mark', {
+            trackedTrain: tracked && tracked.liveTfL ? tracked.id : null,
+            center: center ? [center.lng, center.lat] : null,
+            zoom: me.map ? me.map.getZoom() : null
+        });
+        me.renderLondonTrainRecorder();
+    }
+
+    saveLondonTrainRecording() {
+        const me = this;
+        const recorder = me._londonTrainRecorder;
+
+        if (!recorder) return;
+        const recording = recorder.toJSON({page: window.location.href.split('#')[0], userAgent: navigator.userAgent});
+        const blob = new Blob([JSON.stringify(recording)], {type: 'application/json'});
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `mini-london-trains-${recording.savedAt.replace(/[:.]/g, '-')}.json`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    renderLondonTrainRecorder() {
+        const me = this;
+        const recorder = me._londonTrainRecorder;
+        const panel = me._londonUI && me._londonUI.trainRecorder;
+
+        if (!recorder || !panel) return;
+        const marks = recorder.markCount();
+        panel.querySelector('.london-train-recorder-status').textContent =
+            `Recording trains • ${recorder.pollCount()} polls${marks ? ` • ${marks} marked` : ''}`;
+    }
+
     stopLondonLiveTrains() {
         if (this._londonLiveTrainsPoller) {
             this._londonLiveTrainsPoller.stop();
@@ -5065,6 +5169,10 @@ export default class extends Evented {
                 if (!lineIds.length) return;
                 const pollTimestamp = Date.now();
                 const byLine = await me.fetchLondonTrainPolls(lineIds);
+                if (me._londonTrainRecorder) {
+                    me._londonTrainRecorder.recordPoll({timestamp: pollTimestamp, byLine});
+                    me.renderLondonTrainRecorder();
+                }
 
                 for (const [lid, result] of byLine.entries()) {
                     const railways = me.getLondonRailwaysByLineId(lid);
