@@ -124,7 +124,7 @@ export function createTrainRecorder({maxAgeMs = 10 * 60000, now = () => Date.now
  * @returns {Object} Counts per kind, and up to 50 examples with times and trains.
  */
 export function summariseTrainRecording(recording) {
-    const counts = {polls: 0, decisions: 0, rebinds: 0, directionFlips: 0, backwardMoves: 0, multiSectionJumps: 0, reappeared: 0, discarded: 0};
+    const counts = {polls: 0, decisions: 0, rebinds: 0, directionFlips: 0, backwardMoves: 0, departureJumps: 0, multiSectionJumps: 0, reappeared: 0, discarded: 0};
     const examples = [];
     const lastSeen = new Map();
     const note = (kind, poll, decision, extra = {}) => {
@@ -155,7 +155,14 @@ export function summariseTrainRecording(recording) {
                 counts.directionFlips++;
                 note('direction-flip', poll, decision, {from: previousSighting.drawnDirection, to: decision.drawnDirection});
             }
-            if (before && after && before.routeId === after.routeId &&
+            // Leaving a platform: a dwell's progress is on a zero-length section,
+            // so compare where the train appears instead (0 is the platform).
+            const departed = before && after && before.state === 'dwelling' && after.state === 'moving';
+            if (departed && decision.progress > 0.05) {
+                counts.departureJumps++;
+                note('departure-jump', poll, decision, {progress: decision.progress});
+            }
+            if (!departed && before && after && before.routeId === after.routeId &&
                 Number.isFinite(before.sectionIndex) && Number.isFinite(after.sectionIndex)) {
                 const sections = after.sectionIndex - before.sectionIndex;
                 if (Math.abs(sections) > 1) {
