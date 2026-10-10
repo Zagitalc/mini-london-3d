@@ -36,9 +36,11 @@ import { createDocumentVisibility, createPoller } from './helpers/london-poller.
 import { slugifyIdentity } from './helpers/london-route-display.mjs';
 import { readTrainFeed, TRAIN_FEED_PATH } from './helpers/london-train-feed.mjs';
 import { createTrainRecorder } from './helpers/london-train-recorder.mjs';
+import { londonTrainEtaLabel, londonTrainPopupHTML } from './helpers/london-train-popup.mjs';
+import { buildLondonTrainTimetable, londonTrainSectionProgress, londonTrainTimetableHTML, noteLondonTrainStop } from './helpers/london-train-timetable.mjs';
 import { buildServiceHistoryChart, describeServiceHistoryRow, formatServiceHours } from './helpers/london-service-history-chart.mjs';
 import { drawLondonPillImage, LONDON_PILL_MAX_LINES, LONDON_PILL_PIXEL_RATIO, londonPillImageExpression, londonPillImageId, londonStationSizeExpressions } from './helpers/london-station-style.mjs';
-import { londonBaseMapPaintUpdates, londonEmissiveUpdates, londonLightingTime, londonRailLineColourExpression } from './helpers/london-map-theme.mjs';
+import { londonBaseMapPaintUpdates, londonDarkLineColour, londonEmissiveUpdates, londonLightingTime, londonRailLineColourExpression } from './helpers/london-map-theme.mjs';
 import { describeLondonStationFacilities } from './helpers/london-station-facilities.mjs';
 import { describeLondonStationStories } from './helpers/london-station-stories.mjs';
 import {
@@ -1964,7 +1966,11 @@ export default class extends Evented {
 
                     if (me.markedObject && isVehicle(me.markedObject)) {
                         changed = me.updateObjectPosition(me.markedObject);
-                        if (changed.standing !== undefined) {
+                        // A live London card counts down to the next stop, so
+                        // redraw it when the minute shown changes.
+                        const popupKey = me.markedObject.liveTfL ? me.getLondonTrainPopupKey(me.markedObject) : undefined;
+                        if (changed.standing !== undefined || popupKey !== me._londonTrainPopupKey) {
+                            me._londonTrainPopupKey = popupKey;
                             me.updatePopup({ setHTML: true });
                         }
                     }
@@ -1975,6 +1981,9 @@ export default class extends Evented {
                         }
                         if (changed.viewMode) {
                             me._setViewMode(changed.viewMode);
+                        }
+                        if (me.trackedObject.liveTfL) {
+                            me.renderLondonTrainDrawer();
                         }
                         if (!me.viewAnimationID && !map._zooming && !map._rotating && !map._pitching) {
                             const { coord, altitude, bearing } = me.trackedObject;
@@ -2247,6 +2256,18 @@ export default class extends Evented {
         return fc;
     }
 
+    /**
+     * A line colour as drawn in the current theme. In the dark theme, dark
+     * lines (Piccadilly, Northern) are lightened as they are on the map, so a
+     * strip on a dark card stays visible and matches the line it stands for.
+     * @param {string|Array<string>} colour - Hex colour, or several.
+     * @returns {string|Array<string>} The colour or colours to draw.
+     */
+    getLondonLineDisplayColour(colour) {
+        if (this._londonTheme !== 'dark') return colour;
+        return Array.isArray(colour) ? colour.map(c => londonDarkLineColour(c)) : londonDarkLineColour(colour);
+    }
+
     getLondonStationPopupHTML(feature) {
         const me = this;
         const props = feature && feature.properties ? feature.properties : {};
@@ -2273,7 +2294,7 @@ export default class extends Evented {
             '<div class="london-station-popup-lines">',
             lines.map(line => [
                 '<div class="london-station-popup-line">',
-                `<div class="line-strip" style="background-color: ${escape(line.color || '#0098D4')};"></div>`,
+                `<div class="line-strip" style="background-color: ${escape(me.getLondonLineDisplayColour(line.color || '#0098D4'))};"></div>`,
                 `<span>${escape(line.title || line.railwayId || '')}</span>`,
                 '</div>'
             ].join('')).join(''),
@@ -2838,6 +2859,11 @@ export default class extends Evented {
         me.renderLondonShell();
         me.renderLondonSearchPanel();
         me.renderLondonStationDrawer();
+        me.renderLondonTrainDrawer({ force: true });
+        // An open train card has the old theme's line colour in its HTML.
+        if (me.markedObject && me.markedObject.liveTfL && me.popup && me.popup.isOpen()) {
+            me.updatePopup({ setHTML: true });
+        }
     }
 
     getLondonStationStopPointIds(selection) {
@@ -3242,6 +3268,9 @@ export default class extends Evented {
         const drawer = helpers.createElement('aside', {
             className: 'london-station-drawer'
         }, root);
+        const trainDrawer = helpers.createElement('aside', {
+            className: 'london-station-drawer london-train-drawer'
+        }, root);
         const statusModal = helpers.createElement('div', {
             className: 'london-status-modal'
         }, root);
@@ -3254,6 +3283,7 @@ export default class extends Evented {
             topbar,
             searchPanel,
             drawer,
+            trainDrawer,
             statusModal,
             aboutModal
         };
@@ -3300,6 +3330,32 @@ export default class extends Evented {
                     pitch: me.map.getPitch()
                 });
             }
+        });
+
+        trainDrawer.innerHTML = [
+            '<div class="london-station-drawer-inner">',
+            '<div class="london-card-header london-station-header">',
+            '<div>',
+            '<h2 class="london-station-title"></h2>',
+            '<p class="london-train-drawer-subtitle"></p>',
+            '<div class="london-station-line-strip"></div>',
+            '</div>',
+            '<button type="button" class="london-panel-close" aria-label="Close train timetable">×</button>',
+            '</div>',
+            '<div class="london-station-drawer-body london-train-drawer-body" tabindex="0" aria-label="Train timetable"></div>',
+            '<div class="london-drawer-footer">',
+            '<span class="london-drawer-footer-meta">Live TfL predictions. A passed stop has a time only if this page saw the train there.</span>',
+            '</div>',
+            '</div>'
+        ].join('');
+        trainDrawer.setAttribute('aria-hidden', 'true');
+        me._londonUI.trainDrawerTitle = trainDrawer.querySelector('.london-station-title');
+        me._londonUI.trainDrawerSubtitle = trainDrawer.querySelector('.london-train-drawer-subtitle');
+        me._londonUI.trainDrawerLineStrip = trainDrawer.querySelector('.london-station-line-strip');
+        me._londonUI.trainDrawerBody = trainDrawer.querySelector('.london-train-drawer-body');
+        me._londonUI.trainDrawerClose = trainDrawer.querySelector('.london-panel-close');
+        me._londonUI.trainDrawerClose.addEventListener('click', () => {
+            me.trackObject();
         });
 
         statusModal.innerHTML = [
@@ -4008,7 +4064,7 @@ export default class extends Evented {
         ui.drawer.classList.toggle('open', !!selection);
         ui.drawer.setAttribute('aria-hidden', selection ? 'false' : 'true');
         // On phones the drawer is a bottom sheet; CSS hides the map controls it would cover.
-        me.container.classList.toggle('london-drawer-open', !!selection);
+        me.container.classList.toggle('london-drawer-open', !!selection || !!(me.trackedObject && me.trackedObject.liveTfL));
         if (!selection) {
             me._londonStationDrawerSelection = null;
             return;
@@ -4150,6 +4206,103 @@ export default class extends Evented {
 
         if (activeElementWasInDrawer && !activeElement.isConnected) {
             ui.drawerClose.focus();
+        }
+    }
+
+    /**
+     * The timetable panel for the tracked live train. The stop list is rebuilt
+     * at most once a second, and only rewritten when it changes; the train
+     * marker on the rail moves every frame.
+     * @param {Object} [options] - Options.
+     * @param {boolean} [options.force] - Rebuild now.
+     * @param {boolean} [options.scroll] - Scroll the next stop into view.
+     */
+    renderLondonTrainDrawer({ force = false, scroll = false } = {}) {
+        const me = this;
+        const ui = me._londonUI;
+
+        if (!ui || !ui.trainDrawer) {
+            return;
+        }
+
+        const train = me.trackedObject && me.trackedObject.liveTfL && me.trackedObject.r ? me.trackedObject : null;
+
+        ui.trainDrawer.classList.toggle('open', !!train);
+        ui.trainDrawer.setAttribute('aria-hidden', train ? 'false' : 'true');
+        me.container.classList.toggle('london-drawer-open', !!train || ui.drawer.classList.contains('open'));
+        if (!train) {
+            me._londonTrainDrawerState = null;
+            return;
+        }
+
+        const now = me.clock.getTime();
+        let state = me._londonTrainDrawerState;
+        if (!state || state.trainId !== train.id) {
+            state = me._londonTrainDrawerState = { trainId: train.id };
+            scroll = true;
+        }
+
+        if (force || !state.builtAt || Date.now() - state.builtAt >= 1000) {
+            const railway = train.r;
+            const lineColour = (train.v || railway).color || '#0098D4';
+            const colour = me.getLondonLineDisplayColour(Array.isArray(lineColour) ? lineColour[0] : lineColour);
+            const timetable = buildLondonTrainTimetable({
+                stops: (railway.stations || []).map(station => ({ id: station.id, name: me.getLocalizedStationTitle(station) })),
+                fromIndex: train.sectionIndex,
+                toIndex: train.sectionIndex + (train.sectionLength || 0),
+                facing: train._londonFacing,
+                predictions: train._londonPredictions,
+                history: train._londonStopHistory,
+                destinationId: train._londonDestinationId,
+                now
+            });
+            const html = londonTrainTimetableHTML(timetable, { colour, formatTime: time => me.clock.getTimeString(time) });
+
+            state.builtAt = Date.now();
+            ui.trainDrawerTitle.textContent = me.getDisplayRailwayTitle(railway);
+            ui.trainDrawerSubtitle.textContent = [
+                train.destinationName ? `to ${train.destinationName}` : '',
+                `Train ${train.n || train.id}`
+            ].filter(Boolean).join(' · ');
+            ui.trainDrawerLineStrip.innerHTML = `<span style="background-color:${escapeHTML(colour)};"></span>`;
+            if (html !== state.html) {
+                ui.trainDrawerBody.innerHTML = html;
+                state.html = html;
+            }
+            if (timetable && state.toRow !== timetable.toRow) {
+                // Scroll along as it moves on, but not when it first opens.
+                scroll = scroll || state.toRow !== undefined;
+                state.toRow = timetable.toRow;
+            }
+            state.timetable = timetable;
+        }
+
+        const timetable = state.timetable;
+        const list = ui.trainDrawerBody.querySelector('.london-timetable');
+        const dots = list ? list.querySelectorAll('.london-timetable-dot') : [];
+        if (!timetable || !dots.length || timetable.fromRow < 0 || timetable.toRow < 0) {
+            return;
+        }
+
+        const centre = row => (dots[row] ? dots[row].offsetTop + dots[row].offsetHeight / 2 : 0);
+        const first = centre(0);
+        const from = centre(timetable.fromRow);
+        const to = centre(timetable.toRow);
+        const progress = timetable.fromRow === timetable.toRow ? 0 :
+            londonTrainSectionProgress(train._tflPrevTime, train._tflNextTime, now);
+        const marker = from + (to - from) * progress;
+
+        list.style.setProperty('--rail-top', `${first}px`);
+        list.style.setProperty('--rail-height', `${centre(dots.length - 1) - first}px`);
+        list.style.setProperty('--rail-done', `${marker - first}px`);
+        list.style.setProperty('--train-y', `${marker}px`);
+
+        if (scroll) {
+            const body = ui.trainDrawerBody;
+            const top = list.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop + to;
+
+            body.scrollTo({ top: Math.max(0, top - body.clientHeight / 3), behavior: state.scrolled ? 'smooth' : 'auto' });
+            state.scrolled = true;
         }
     }
 
@@ -4722,6 +4875,23 @@ export default class extends Evented {
             const facing = londonTrainFacing(sectionLength, headingStep, train._londonFacing, directionStep);
             train._londonFacing = facing;
             train.d = facing >= 0 ? railway.ascending : railway.descending;
+            // For the timetable panel: the stops ahead, where it terminates,
+            // and when it was seen leaving the stops behind.
+            train._londonPredictions = predictions.map(p => ({
+                stationId: p.station.id,
+                expectedArrival: isFinite(p.expectedArrival) ? p.expectedArrival : nowEpoch + p.timeToStation * 1000,
+                platform: p.platformName
+            }));
+            const destinationInfo = t.dest ? resolveStationInfo(t.dest, stationIndexLookup) : null;
+            train._londonDestinationId = destinationInfo && destinationInfo.station ? destinationInfo.station.id : undefined;
+            train._londonStopHistory = train._londonStopHistory || new Map();
+            const stopStation = isAtStation ? activeCurrentStation : prevStation;
+            noteLondonTrainStop(train._londonStopHistory, {
+                stationId: stopStation && stopStation.id,
+                time: isAtStation ? nowEpoch : prevEpoch,
+                facing,
+                atStation: isAtStation
+            });
             train._londonLineId = getLondonLineKey(railway.lineId || railway.id);
             train._londonStandingHint = isAtStation;
             record({
@@ -4980,6 +5150,15 @@ export default class extends Evented {
 
         if (removeFromLookup && me._londonLiveTrafficTrains) {
             me._londonLiveTrafficTrains.delete(train.id || train.key);
+            // It has left the feed: close its card and timetable rather than
+            // leave them on a train that is no longer drawn. Deferred, as this
+            // can run inside the frame loop while it is using the train.
+            if (me.trackedObject === train || me.markedObject === train) {
+                Promise.resolve().then(() => {
+                    if (me.trackedObject === train) me.trackObject();
+                    if (me.markedObject === train) me.markObject();
+                });
+            }
         }
 
         if (me.trafficLayer && me.trafficLayer.removeObject && train.instanceID !== undefined) {
@@ -6025,34 +6204,25 @@ export default class extends Evented {
             status = railway.status;
 
         if (train.liveTfL) {
-            const headerColor = (train.v || railway).color || '#0098D4';
-            const destinationLabel = train.destinationName
-                ? dict['for'].replace('$1', train.destinationName)
-                : me.getLocalizedRailDirectionTitle(train.d);
-            const trainNumber = train.n || train.id;
-            const prevStation = train.departureStation ? me.getLocalizedStationTitle(train.departureStation) : null;
-            const nextStation = train.arrivalStation ? me.getLocalizedStationTitle(train.arrivalStation) : null;
-            const prevTime = Number.isFinite(train._tflPrevTime) ? me.clock.getTimeString(train._tflPrevTime) : null;
             const nextTime = Number.isFinite(train._tflNextTime) ? me.clock.getTimeString(train._tflNextTime) : null;
-            const previousStopLabel = dict['previous-stop'] || 'Previous stop';
-            const nextStopLabel = dict['next-stop'] || 'Next stop';
+            const prevTime = Number.isFinite(train._tflPrevTime) ? me.clock.getTimeString(train._tflPrevTime) : null;
 
-            return [
-                '<div class="desc-header">',
-                Array.isArray(headerColor) ? [
-                    '<div>',
-                    ...headerColor.slice(0, 3).map(c => `<div class="line-strip" style="background-color: ${c};"></div>`),
-                    '</div>'
-                ].join('') : `<div style="background-color: ${headerColor};"></div>`,
-                '<div><strong>',
-                me.getDisplayRailwayTitle(railway),
-                '</strong>',
-                `<br>${destinationLabel}`,
-                '</div></div>',
-                `<strong>${dict['train-number']}:</strong> ${trainNumber}`,
-                prevStation ? `<br><strong>${previousStopLabel}:</strong> ${prevStation}${prevTime ? ` ${prevTime}` : ''}` : '',
-                nextStation ? `<br><strong>${nextStopLabel}:</strong> ${nextStation}${nextTime ? ` ${nextTime}` : ''}` : ''
-            ].join('');
+            return londonTrainPopupHTML({
+                lineTitle: me.getDisplayRailwayTitle(railway),
+                colors: me.getLondonLineDisplayColour((train.v || railway).color || '#0098D4'),
+                destination: train.destinationName,
+                trainNumber: train.n || train.id,
+                next: train.arrivalStation ? {
+                    name: me.getLocalizedStationTitle(train.arrivalStation),
+                    time: nextTime,
+                    platform: train.platformName,
+                    etaLabel: londonTrainEtaLabel(train._tflNextTime - me.clock.getTime())
+                } : null,
+                previous: train.departureStation ? {
+                    name: me.getLocalizedStationTitle(train.departureStation),
+                    time: prevTime
+                } : null
+            });
         }
 
         return [
@@ -6086,6 +6256,23 @@ export default class extends Evented {
             delay >= 60000 ? `<br>${dict['delay'].replace('$1', Math.floor(delay / 60000))}</span>` : '',
             status && lang === 'ja' ? `<br><span class="desc-caution"><strong>${status}:</strong> ${railway.text}</span>` : ''
         ].join('');
+    }
+
+    /**
+     * What a live London train card shows that changes while it is open:
+     * the countdown and the two stops. A change means the card is redrawn.
+     * @param {Object} train - A live TfL train.
+     * @returns {string} The key.
+     */
+    getLondonTrainPopupKey(train) {
+        const me = this;
+
+        return [
+            londonTrainEtaLabel(train._tflNextTime - me.clock.getTime()),
+            train.arrivalStation && train.arrivalStation.id,
+            train.departureStation && train.departureStation.id,
+            train.platformName
+        ].join('|');
     }
 
     getFlightDescription(flight) {
@@ -7255,7 +7442,11 @@ export default class extends Evented {
 
             map.getCanvas().style.cursor = 'pointer';
             me.popup = new AnimatedPopup({
-                className: helpers.isTouchDevice() ? 'popup-object popup-touch' : 'popup-object',
+                className: [
+                    'popup-object',
+                    helpers.isTouchDevice() ? 'popup-touch' : '',
+                    me.getCityFromLocation() === 'london' ? 'london-object-popup' : ''
+                ].filter(Boolean).join(' '),
                 closeButton: false,
                 closeOnClick: false,
                 maxWidth: '300px',
@@ -7367,6 +7558,13 @@ export default class extends Evented {
                 } else if (object.trip) {
                     me.detailPanel = new BusPanel({ object });
                     me.detailPanel.addTo(me);
+                } else if (object.liveTfL && me.getCityFromLocation() === 'london') {
+                    me.detailPanel = {
+                        remove: () => me.renderLondonTrainDrawer({ force: true }),
+                        reset: () => me.renderLondonTrainDrawer({ force: true, scroll: true }),
+                        updateContent: () => me.renderLondonTrainDrawer({ force: true })
+                    };
+                    me.renderLondonTrainDrawer({ force: true, scroll: true });
                 }
 
                 trafficLayer.trackObject(object);
