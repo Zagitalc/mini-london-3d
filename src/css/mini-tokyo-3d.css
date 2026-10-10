@@ -2370,11 +2370,125 @@
     color: var(--london-muted);
     background: var(--london-card-muted-bg);
 }
-.mini-tokyo-3d.is-london .london-station-popup-wrap .mapboxgl-popup-content {
-    border-radius: 14px;
-    background: rgba(20, 20, 20, 0.92);
-    color: #fff;
-    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18);
+/* Hover cards for stations and live trains: the panel surface, not the
+   Tokyo black box, so they follow the light and dark themes. */
+.mini-tokyo-3d.is-london .london-station-popup-wrap .mapboxgl-popup-content,
+.mini-tokyo-3d.is-london .london-object-popup .mapboxgl-popup-content {
+    padding: 12px 14px;
+    border: 1px solid var(--london-border);
+    border-radius: 16px;
+    background: var(--london-surface-strong);
+    color: var(--london-text);
+    box-shadow: var(--london-shadow);
+}
+.mini-tokyo-3d.is-london .london-station-popup-wrap.mapboxgl-popup-anchor-top .mapboxgl-popup-tip,
+.mini-tokyo-3d.is-london .london-station-popup-wrap.mapboxgl-popup-anchor-top-left .mapboxgl-popup-tip,
+.mini-tokyo-3d.is-london .london-station-popup-wrap.mapboxgl-popup-anchor-top-right .mapboxgl-popup-tip,
+.mini-tokyo-3d.is-london .london-object-popup.mapboxgl-popup-anchor-top .mapboxgl-popup-tip,
+.mini-tokyo-3d.is-london .london-object-popup.mapboxgl-popup-anchor-top-left .mapboxgl-popup-tip,
+.mini-tokyo-3d.is-london .london-object-popup.mapboxgl-popup-anchor-top-right .mapboxgl-popup-tip {
+    border-bottom-color: var(--london-surface-strong);
+}
+.mini-tokyo-3d.is-london .london-station-popup-wrap.mapboxgl-popup-anchor-bottom .mapboxgl-popup-tip,
+.mini-tokyo-3d.is-london .london-station-popup-wrap.mapboxgl-popup-anchor-bottom-left .mapboxgl-popup-tip,
+.mini-tokyo-3d.is-london .london-station-popup-wrap.mapboxgl-popup-anchor-bottom-right .mapboxgl-popup-tip,
+.mini-tokyo-3d.is-london .london-object-popup.mapboxgl-popup-anchor-bottom .mapboxgl-popup-tip,
+.mini-tokyo-3d.is-london .london-object-popup.mapboxgl-popup-anchor-bottom-left .mapboxgl-popup-tip,
+.mini-tokyo-3d.is-london .london-object-popup.mapboxgl-popup-anchor-bottom-right .mapboxgl-popup-tip {
+    border-top-color: var(--london-surface-strong);
+}
+.mini-tokyo-3d.is-london .london-station-popup-wrap.mapboxgl-popup-anchor-left .mapboxgl-popup-tip,
+.mini-tokyo-3d.is-london .london-object-popup.mapboxgl-popup-anchor-left .mapboxgl-popup-tip {
+    border-right-color: var(--london-surface-strong);
+}
+.mini-tokyo-3d.is-london .london-station-popup-wrap.mapboxgl-popup-anchor-right .mapboxgl-popup-tip,
+.mini-tokyo-3d.is-london .london-object-popup.mapboxgl-popup-anchor-right .mapboxgl-popup-tip {
+    border-left-color: var(--london-surface-strong);
+}
+.mini-tokyo-3d.is-london .london-train-popup {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 200px;
+    font-size: 13px;
+    line-height: 1.35;
+}
+.mini-tokyo-3d.is-london .london-train-popup-header {
+    display: flex;
+    align-items: stretch;
+    gap: 10px;
+}
+.mini-tokyo-3d.is-london .london-train-popup-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 5px;
+    flex: none;
+}
+.mini-tokyo-3d.is-london .london-train-popup-bar span {
+    flex: 1;
+    border-radius: 999px;
+}
+.mini-tokyo-3d.is-london .london-train-popup-heading {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+.mini-tokyo-3d.is-london .london-train-popup-heading strong {
+    font-size: 15px;
+}
+.mini-tokyo-3d.is-london .london-train-popup-heading span,
+.mini-tokyo-3d.is-london .london-train-popup-meta,
+.mini-tokyo-3d.is-london .london-train-popup-previous,
+.mini-tokyo-3d.is-london .london-train-popup-footer {
+    color: var(--london-muted);
+}
+.mini-tokyo-3d.is-london .london-train-popup-next {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--london-border);
+    border-radius: 12px;
+    background: var(--london-card-bg);
+}
+.mini-tokyo-3d.is-london .london-train-popup-next-copy {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+.mini-tokyo-3d.is-london .london-train-popup-label {
+    color: var(--london-muted);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.mini-tokyo-3d.is-london .london-train-popup-meta {
+    font-size: 12px;
+}
+.mini-tokyo-3d.is-london .london-train-popup-eta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    flex: none;
+}
+.mini-tokyo-3d.is-london .london-train-popup-eta strong {
+    padding: 2px 10px;
+    border-radius: 999px;
+    background: var(--london-hover);
+    color: var(--london-blue);
+    font-size: 14px;
+    white-space: nowrap;
+}
+.mini-tokyo-3d.is-london .london-train-popup-eta span {
+    margin-top: 2px;
+    color: var(--london-muted);
+    font-size: 12px;
+}
+.mini-tokyo-3d.is-london .london-train-popup-footer {
+    font-size: 12px;
 }
 .mini-tokyo-3d.is-london .london-station-popup {
     display: flex;

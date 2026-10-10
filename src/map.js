@@ -36,6 +36,7 @@ import { createDocumentVisibility, createPoller } from './helpers/london-poller.
 import { slugifyIdentity } from './helpers/london-route-display.mjs';
 import { readTrainFeed, TRAIN_FEED_PATH } from './helpers/london-train-feed.mjs';
 import { createTrainRecorder } from './helpers/london-train-recorder.mjs';
+import { londonTrainEtaLabel, londonTrainPopupHTML } from './helpers/london-train-popup.mjs';
 import { buildServiceHistoryChart, describeServiceHistoryRow, formatServiceHours } from './helpers/london-service-history-chart.mjs';
 import { drawLondonPillImage, LONDON_PILL_MAX_LINES, LONDON_PILL_PIXEL_RATIO, londonPillImageExpression, londonPillImageId, londonStationSizeExpressions } from './helpers/london-station-style.mjs';
 import { londonBaseMapPaintUpdates, londonEmissiveUpdates, londonLightingTime, londonRailLineColourExpression } from './helpers/london-map-theme.mjs';
@@ -1964,7 +1965,11 @@ export default class extends Evented {
 
                     if (me.markedObject && isVehicle(me.markedObject)) {
                         changed = me.updateObjectPosition(me.markedObject);
-                        if (changed.standing !== undefined) {
+                        // A live London card counts down to the next stop, so
+                        // redraw it when the minute shown changes.
+                        const popupKey = me.markedObject.liveTfL ? me.getLondonTrainPopupKey(me.markedObject) : undefined;
+                        if (changed.standing !== undefined || popupKey !== me._londonTrainPopupKey) {
+                            me._londonTrainPopupKey = popupKey;
                             me.updatePopup({ setHTML: true });
                         }
                     }
@@ -6025,34 +6030,25 @@ export default class extends Evented {
             status = railway.status;
 
         if (train.liveTfL) {
-            const headerColor = (train.v || railway).color || '#0098D4';
-            const destinationLabel = train.destinationName
-                ? dict['for'].replace('$1', train.destinationName)
-                : me.getLocalizedRailDirectionTitle(train.d);
-            const trainNumber = train.n || train.id;
-            const prevStation = train.departureStation ? me.getLocalizedStationTitle(train.departureStation) : null;
-            const nextStation = train.arrivalStation ? me.getLocalizedStationTitle(train.arrivalStation) : null;
-            const prevTime = Number.isFinite(train._tflPrevTime) ? me.clock.getTimeString(train._tflPrevTime) : null;
             const nextTime = Number.isFinite(train._tflNextTime) ? me.clock.getTimeString(train._tflNextTime) : null;
-            const previousStopLabel = dict['previous-stop'] || 'Previous stop';
-            const nextStopLabel = dict['next-stop'] || 'Next stop';
+            const prevTime = Number.isFinite(train._tflPrevTime) ? me.clock.getTimeString(train._tflPrevTime) : null;
 
-            return [
-                '<div class="desc-header">',
-                Array.isArray(headerColor) ? [
-                    '<div>',
-                    ...headerColor.slice(0, 3).map(c => `<div class="line-strip" style="background-color: ${c};"></div>`),
-                    '</div>'
-                ].join('') : `<div style="background-color: ${headerColor};"></div>`,
-                '<div><strong>',
-                me.getDisplayRailwayTitle(railway),
-                '</strong>',
-                `<br>${destinationLabel}`,
-                '</div></div>',
-                `<strong>${dict['train-number']}:</strong> ${trainNumber}`,
-                prevStation ? `<br><strong>${previousStopLabel}:</strong> ${prevStation}${prevTime ? ` ${prevTime}` : ''}` : '',
-                nextStation ? `<br><strong>${nextStopLabel}:</strong> ${nextStation}${nextTime ? ` ${nextTime}` : ''}` : ''
-            ].join('');
+            return londonTrainPopupHTML({
+                lineTitle: me.getDisplayRailwayTitle(railway),
+                colors: (train.v || railway).color || '#0098D4',
+                destination: train.destinationName,
+                trainNumber: train.n || train.id,
+                next: train.arrivalStation ? {
+                    name: me.getLocalizedStationTitle(train.arrivalStation),
+                    time: nextTime,
+                    platform: train.platformName,
+                    etaLabel: londonTrainEtaLabel(train._tflNextTime - me.clock.getTime())
+                } : null,
+                previous: train.departureStation ? {
+                    name: me.getLocalizedStationTitle(train.departureStation),
+                    time: prevTime
+                } : null
+            });
         }
 
         return [
@@ -6086,6 +6082,23 @@ export default class extends Evented {
             delay >= 60000 ? `<br>${dict['delay'].replace('$1', Math.floor(delay / 60000))}</span>` : '',
             status && lang === 'ja' ? `<br><span class="desc-caution"><strong>${status}:</strong> ${railway.text}</span>` : ''
         ].join('');
+    }
+
+    /**
+     * What a live London train card shows that changes while it is open:
+     * the countdown and the two stops. A change means the card is redrawn.
+     * @param {Object} train - A live TfL train.
+     * @returns {string} The key.
+     */
+    getLondonTrainPopupKey(train) {
+        const me = this;
+
+        return [
+            londonTrainEtaLabel(train._tflNextTime - me.clock.getTime()),
+            train.arrivalStation && train.arrivalStation.id,
+            train.departureStation && train.departureStation.id,
+            train.platformName
+        ].join('|');
     }
 
     getFlightDescription(flight) {
@@ -7255,7 +7268,11 @@ export default class extends Evented {
 
             map.getCanvas().style.cursor = 'pointer';
             me.popup = new AnimatedPopup({
-                className: helpers.isTouchDevice() ? 'popup-object popup-touch' : 'popup-object',
+                className: [
+                    'popup-object',
+                    helpers.isTouchDevice() ? 'popup-touch' : '',
+                    me.getCityFromLocation() === 'london' ? 'london-object-popup' : ''
+                ].filter(Boolean).join(' '),
                 closeButton: false,
                 closeOnClick: false,
                 maxWidth: '300px',
