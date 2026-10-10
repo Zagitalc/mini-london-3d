@@ -2512,6 +2512,127 @@
     border-radius: 999px;
     flex: none;
 }
+/* Timetable for a tracked live train: a rail in the line colour, greyed
+   behind the train, with the stops it has passed greyed too. */
+.mini-tokyo-3d.is-london .london-train-drawer-subtitle {
+    margin: 2px 0 8px;
+    color: var(--london-muted);
+    font-size: 14px;
+}
+.mini-tokyo-3d.is-london .london-train-drawer .london-drawer-footer-meta {
+    font-size: 11px;
+    line-height: 1.4;
+}
+.mini-tokyo-3d.is-london .london-timetable {
+    position: relative;
+    --rail-x: 13px;
+    /* Solid, so the line colour does not show through the passed rail. */
+    --london-timetable-passed: #d4d4d0;
+}
+.mini-tokyo-3d.is-london.london-theme-dark .london-timetable {
+    --london-timetable-passed: #2c3854;
+}
+.mini-tokyo-3d.is-london .london-timetable-rail,
+.mini-tokyo-3d.is-london .london-timetable-rail-done {
+    position: absolute;
+    left: calc(var(--rail-x) - 3px);
+    top: var(--rail-top, 0);
+    width: 6px;
+    border-radius: 999px;
+}
+.mini-tokyo-3d.is-london .london-timetable-rail {
+    height: var(--rail-height, 0);
+    background: var(--line-color);
+}
+.mini-tokyo-3d.is-london .london-timetable-rail-done {
+    height: var(--rail-done, 0);
+    background: var(--london-timetable-passed);
+}
+.mini-tokyo-3d.is-london .london-timetable-train {
+    position: absolute;
+    z-index: 2;
+    left: calc(var(--rail-x) - 9px);
+    top: calc(var(--train-y, 0) - 9px);
+    width: 18px;
+    height: 18px;
+    border: 3px solid var(--london-surface-strong);
+    border-radius: 50%;
+    background: var(--line-color);
+    box-shadow: 0 0 0 2px var(--line-color), var(--london-shadow);
+}
+.mini-tokyo-3d.is-london .london-timetable-stops {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+.mini-tokyo-3d.is-london .london-timetable-stop {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 44px;
+    padding: 4px 8px 4px 0;
+    border-radius: 12px;
+}
+.mini-tokyo-3d.is-london .london-timetable-dot {
+    position: relative;
+    z-index: 1;
+    flex: none;
+    width: 12px;
+    height: 12px;
+    margin-left: calc(var(--rail-x) - 6px);
+    margin-right: 4px;
+    border: 3px solid var(--line-color);
+    border-radius: 50%;
+    background: var(--london-surface-strong);
+    box-sizing: border-box;
+}
+.mini-tokyo-3d.is-london .london-timetable-copy {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+}
+.mini-tokyo-3d.is-london .london-timetable-copy strong {
+    font-size: 14px;
+    font-weight: 600;
+}
+.mini-tokyo-3d.is-london .london-timetable-copy span,
+.mini-tokyo-3d.is-london .london-timetable-time span {
+    color: var(--london-muted);
+    font-size: 12px;
+}
+.mini-tokyo-3d.is-london .london-timetable-time {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    flex: none;
+    font-variant-numeric: tabular-nums;
+}
+.mini-tokyo-3d.is-london .london-timetable-time strong {
+    padding: 1px 9px;
+    border-radius: 999px;
+    background: var(--london-hover);
+    color: var(--london-blue);
+    font-size: 13px;
+}
+.mini-tokyo-3d.is-london .london-timetable-stop.is-passed .london-timetable-dot {
+    border-color: var(--london-timetable-passed);
+    background: var(--london-timetable-passed);
+}
+.mini-tokyo-3d.is-london .london-timetable-stop.is-passed .london-timetable-copy strong {
+    color: var(--london-muted);
+    font-weight: 500;
+}
+.mini-tokyo-3d.is-london .london-timetable-stop.is-next,
+.mini-tokyo-3d.is-london .london-timetable-stop.is-current {
+    background: var(--london-card-bg);
+    box-shadow: inset 0 0 0 1px var(--london-border);
+}
+.mini-tokyo-3d.is-london .london-timetable-stop.is-next .london-timetable-copy strong,
+.mini-tokyo-3d.is-london .london-timetable-stop.is-current .london-timetable-copy strong {
+    font-weight: 700;
+}
+
 @media (max-width: 960px) {
     .mini-tokyo-3d.is-london .mapboxgl-ctrl-top-left,
     .mini-tokyo-3d.is-london .mapboxgl-ctrl-top-right {
