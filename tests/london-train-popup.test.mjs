@@ -17,6 +17,13 @@ test('platform names are tidied, and placeholders dropped', () => {
     assert.equal(londonPlatformLabel('null'), '');
     assert.equal(londonPlatformLabel('Platform Unavailable'), '');
     assert.equal(londonPlatformLabel(undefined), '');
+    assert.equal(londonPlatformLabel('Westbound  -\tPlatform 1'), 'Westbound · Platform 1', 'any whitespace round the dash');
+    assert.equal(londonPlatformLabel('Inner Rail - Platform 2 - Westbound'), 'Inner Rail · Platform 2 · Westbound');
+
+    const spaces = ' '.repeat(200000);
+    const started = Date.now();
+    assert.equal(londonPlatformLabel(`a${spaces}b`), 'a b');
+    assert.ok(Date.now() - started < 200, 'long runs of spaces stay fast');
 });
 
 test('the card shows line, destination, next stop with platform and countdown, previous stop and train', () => {

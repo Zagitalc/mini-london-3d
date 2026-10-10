@@ -23,7 +23,9 @@ export function londonTrainEtaLabel(ms) {
  * @returns {string} The platform for display, or '' if there is none.
  */
 export function londonPlatformLabel(platform) {
-    const text = String(platform || '').trim().replace(/\s+-\s+/g, ' · ');
+    // Collapse whitespace first, then swap the separator with a plain string
+    // replace: /\s+-\s+/ backtracks quadratically on long runs of spaces.
+    const text = String(platform || '').replace(/\s+/g, ' ').trim().split(' - ').join(' · ');
     return /^(null|unknown|platform unavailable)$/i.test(text) ? '' : text;
 }
 
