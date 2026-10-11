@@ -39,6 +39,7 @@ import { createTrainRecorder } from './helpers/london-train-recorder.mjs';
 import { londonTrainEtaLabel, londonTrainPopupHTML } from './helpers/london-train-popup.mjs';
 import { buildLondonTrainTimetable, londonTrainSectionProgress, londonTrainTimetableHTML, noteLondonTrainStop } from './helpers/london-train-timetable.mjs';
 import { buildServiceHistoryChart, describeServiceHistoryRow, formatServiceHours } from './helpers/london-service-history-chart.mjs';
+import { londonRailSizeExpressions } from './helpers/london-rail-style.mjs';
 import { drawLondonPillImage, LONDON_PILL_MAX_LINES, LONDON_PILL_PIXEL_RATIO, londonPillImageExpression, londonPillImageId, londonStationSizeExpressions } from './helpers/london-station-style.mjs';
 import { londonBaseMapPaintUpdates, londonDarkLineColour, londonEmissiveUpdates, londonLightingTime, londonRailLineColourExpression } from './helpers/london-map-theme.mjs';
 import { describeLondonStationFacilities } from './helpers/london-station-facilities.mjs';
@@ -545,41 +546,8 @@ export default class extends Evented {
 
     getLondonFallbackPaintExpressions() {
         const stationSizes = londonStationSizeExpressions();
-        const lineWidth = [
-            'interpolate',
-            ['linear'],
-            ['zoom'],
-            9, 0.6,
-            10, 1.2,
-            11, 2.2,
-            12, 3.8,
-            13, 5.4,
-            14, 6.2,
-            15, 5.1,
-            16, 4.0,
-            17, 3.0,
-            18, 2.1,
-            19, 1.5
-        ];
-
         return {
-            lineWidth,
-            lineOffset: [
-                'interpolate',
-                ['linear'],
-                ['zoom'],
-                9, ['*', ['coalesce', ['get', 'laneOffset'], 0], 2.6],
-                10, ['*', ['coalesce', ['get', 'laneOffset'], 0], 3.2],
-                11, ['*', ['coalesce', ['get', 'laneOffset'], 0], 4.2],
-                12, ['*', ['coalesce', ['get', 'laneOffset'], 0], 5.8],
-                13, ['*', ['coalesce', ['get', 'laneOffset'], 0], 7.4],
-                14, ['*', ['coalesce', ['get', 'laneOffset'], 0], 8.2],
-                15, ['*', ['coalesce', ['get', 'laneOffset'], 0], 7.1],
-                16, ['*', ['coalesce', ['get', 'laneOffset'], 0], 6.0],
-                17, ['*', ['coalesce', ['get', 'laneOffset'], 0], 5.0],
-                18, ['*', ['coalesce', ['get', 'laneOffset'], 0], 4.1],
-                19, ['*', ['coalesce', ['get', 'laneOffset'], 0], 3.5]
-            ],
+            ...londonRailSizeExpressions(),
             lineOpacity: [
                 'interpolate',
                 ['linear'],

@@ -23,11 +23,11 @@ export const LONDON_TRAIN_SCALE_PROFILE = Object.freeze([
     Object.freeze([12, 0.56]),
     Object.freeze([13, 0.72]),
     Object.freeze([14, 0.80]),
-    Object.freeze([15, 0.74]),
-    Object.freeze([16, 0.64]),
-    Object.freeze([17, 0.56]),
-    Object.freeze([18, 0.50]),
-    Object.freeze([20, 0.46])
+    Object.freeze([15, 0.78]),
+    Object.freeze([16, 0.78]),
+    Object.freeze([17, 0.80]),
+    Object.freeze([18, 0.88]),
+    Object.freeze([19, 0.95])
 ]);
 
 export function resolveCarDimensions(dimensions = DEFAULT_CAR_DIMENSIONS) {
@@ -74,5 +74,7 @@ export function getZoomProfileValue(zoom, profile) {
 }
 
 export function getLondonTrainScaleFactor(zoom) {
-    return getZoomProfileValue(zoom, LONDON_TRAIN_SCALE_PROFILE);
+    // The shared vehicle shader stops compensating for zoom above 19. Cancel
+    // that clamp here for London so maximum zoom keeps a readable pixel size.
+    return getZoomProfileValue(zoom, LONDON_TRAIN_SCALE_PROFILE) * Math.pow(2, Math.min(19, zoom) - zoom);
 }
