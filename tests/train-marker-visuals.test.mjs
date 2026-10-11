@@ -55,15 +55,13 @@ test('delay-marker scale follows car scale by default and can be independent', (
     });
 });
 
-test('London train zoom profile peaks at 14 and decreases monotonically afterward', () => {
+test('London trains remain readable from street zoom through maximum zoom', () => {
     assert.equal(getLondonTrainScaleFactor(9), 0.20);
     assert.equal(getLondonTrainScaleFactor(14), 0.80);
-    assert.equal(getLondonTrainScaleFactor(15.5), 0.69);
-    assert.equal(getLondonTrainScaleFactor(20), 0.46);
-
-    const afterPeak = LONDON_TRAIN_SCALE_PROFILE.filter(([zoom]) => zoom >= 14);
-
-    for (let i = 1; i < afterPeak.length; i++) {
-        assert.ok(afterPeak[i][1] <= afterPeak[i - 1][1]);
-    }
+    assert.equal(getLondonTrainScaleFactor(15.5), 0.78);
+    const close = LONDON_TRAIN_SCALE_PROFILE.filter(([zoom]) => zoom >= 16);
+    for (let i = 1; i < close.length; i++) assert.ok(close[i][1] >= close[i - 1][1]);
+    // Pixel footprint includes the shared shader clamp and map's 2^zoom scale.
+    const pixels = zoom => getLondonTrainScaleFactor(zoom) * 2 ** (zoom - Math.min(19, zoom));
+    for (const zoom of [19, 19.5, 20, 21, 22]) assert.ok(Math.abs(pixels(zoom) - 0.95) < 1e-12);
 });

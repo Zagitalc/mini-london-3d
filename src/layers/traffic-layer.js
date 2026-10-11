@@ -4,6 +4,8 @@ import ComputeRenderer from '../gpgpu/compute-renderer';
 import { lerp } from '../helpers/helpers';
 import { hasDarkBackground } from '../helpers/helpers-mapbox';
 import { transactionalRebindLondonTrain } from '../helpers/london-live-train-rebind.mjs';
+import { clampLondonTrainOffset, getLondonTrainOffsetLimit, getMinimumPixelsPerMetre, layoutLondonTrainMarkers } from '../helpers/london-train-layout.mjs';
+import {LONDON_TUBE_MARKER_PROFILE} from '../mesh-sets/london-tube-car-geometry.js';
 import { getLondonTrainOpacityTargets } from '../helpers/london-train-opacity.mjs';
 import {
     getLondonTrainScaleFactor,
@@ -57,6 +59,7 @@ export default class {
         me.objects = new Map();
 
         me.onCameraChanged = me.onCameraChanged.bind(me);
+        me.onLondonTrainCameraChanged = () => me.onCameraChanged({trainsOnly: true});
     }
 
     onAdd(map, context) {
@@ -91,6 +94,13 @@ export default class {
             carParameters.dimensions = LONDON_TRAIN_DIMENSIONS;
             carParameters.delayMarkerModelScale = modelScale;
             carParameters.markerStyle = 'london-tube';
+        }
+
+        if (me.isLondon) {
+            me.londonTrainOffsets = new Map();
+            me.londonTrainLayoutAnchors = new Map();
+            me.londonTrainScreenPoints = new Map();
+            me.londonLayoutPoint = new Vector3();
         }
 
         me.computeRenderer = new ComputeRenderer(MAX_UG_CARS + MAX_OG_CARS + MAX_AIRCRAFTS + MAX_BUSES, { modelOrigin, chunkSize });
@@ -144,6 +154,11 @@ export default class {
 
         map.on('zoom', me.onCameraChanged);
         map.on('pitch', me.onCameraChanged);
+        // The wrapper does not forward native camera events. Update London
+        // trains directly, without changing other vehicles' existing behavior.
+        if (me.isLondon) {
+            for (const event of ['zoom', 'pitch', 'resize']) map.map.on(event, me.onLondonTrainCameraChanged);
+        }
     }
 
     onRemove(map) {
@@ -162,6 +177,9 @@ export default class {
 
         map.off('zoom', me.onCameraChanged);
         map.off('pitch', me.onCameraChanged);
+        if (me.isLondon) {
+            for (const event of ['zoom', 'pitch', 'resize']) map.map.off(event, me.onLondonTrainCameraChanged);
+        }
     }
 
     prerender(map, context) {
@@ -192,7 +210,113 @@ export default class {
         }
     }
 
-    onCameraChanged() {
+    beforeRender() {
+        if (this.isLondon) this.layoutLondonTrains();
+    }
+
+    layoutLondonTrains() {
+        const me = this;
+        const map = me.map.map;
+        const camera = me.context.camera;
+        const {width, height} = map.transform;
+        const uniforms = me.ogCarMeshSet.uniforms;
+        const zoom = uniforms.zoom.value;
+        const cameraZ = uniforms.cameraZ.value;
+        const markers = [];
+        const anchors = me.londonTrainLayoutAnchors;
+        const scaleAt = anchor => {
+            const zoom0 = zoom + Math.log2(cameraZ / Math.abs(cameraZ - anchor.z));
+            return Math.pow(2, 14 - Math.max(13, Math.min(19, zoom0))) * uniforms.modelScale.value * 100;
+        };
+        const offsetLimit = anchor => {
+            if (zoom <= 15) return 0;
+            const e = camera.projectionMatrix.elements;
+            const z = anchor.z + uniforms.carLift.value * scaleAt(anchor);
+            const clipX = e[0] * anchor.x + e[4] * anchor.y + e[8] * z + e[12];
+            const clipY = e[1] * anchor.x + e[5] * anchor.y + e[9] * z + e[13];
+            const w = e[3] * anchor.x + e[7] * anchor.y + e[11] * z + e[15];
+            const factor = me.baseModelScale / (w * w);
+            // Exact screen derivatives per ground metre at the rendered centre.
+            const east = {x: width / 2 * (e[0] * w - clipX * e[3]) * factor,
+                y: -height / 2 * (e[1] * w - clipY * e[3]) * factor};
+            const north = {x: width / 2 * (e[4] * w - clipX * e[7]) * factor,
+                y: -height / 2 * (e[5] * w - clipY * e[7]) * factor};
+            const perspective = me.baseModelScale * Math.hypot(e[3], e[7]) / Math.abs(w);
+            return getLondonTrainOffsetLimit(zoom, getMinimumPixelsPerMetre({x: 0, y: 0}, east, north), perspective);
+        };
+        const points = me.londonTrainScreenPoints;
+        points.clear();
+        for (const object of me.objects.values()) {
+            if (object.type !== 'train') continue;
+            const pos = me.getObjectPosition(object);
+            if (!pos || !pos.coord) continue;
+            const anchor = me.map.getModelPosition(pos.coord, pos.altitude);
+            anchors.set(object.instanceID, anchor);
+            const scale = scaleAt(anchor);
+            const variation = 1 + object.instanceID % 256 / 256 * 0.03;
+            const angle = -pos.bearing * Math.PI / 180;
+            const cos = Math.cos(angle), sin = Math.sin(angle);
+            const project = (x, y, z) => {
+                const p = me.londonLayoutPoint.set(
+                    anchor.x + (x * cos - y * sin) * scale * variation,
+                    anchor.y + (x * sin + y * cos) * scale * variation,
+                    anchor.z + (z * variation + uniforms.carLift.value) * scale
+                ).project(camera);
+                return {x: (p.x + 1) / 2 * width, y: (1 - p.y) / 2 * height};
+            };
+            const centre = project(0, 0, 0);
+            if (!Number.isFinite(centre.x + centre.y) || centre.x < -100 || centre.x > width + 100 ||
+                centre.y < -100 || centre.y > height + 100) continue;
+            const side = project(LONDON_TUBE_MARKER_PROFILE.width, 0, 0);
+            const breadth = Math.hypot(side.x - centre.x, side.y - centre.y);
+            let halfWidth = 0, halfHeight = 0;
+            for (const x of [-1, 1]) {
+                for (const y of [-1, 1]) {
+                    for (const z of [-1, 1]) {
+                        const corner = project(
+                            x * LONDON_TUBE_MARKER_PROFILE.width / 2,
+                            y * LONDON_TUBE_MARKER_PROFILE.renderedLength / 2,
+                            z * LONDON_TUBE_MARKER_PROFILE.height / 2
+                        );
+                        halfWidth = Math.max(halfWidth, Math.abs(corner.x - centre.x));
+                        halfHeight = Math.max(halfHeight, Math.abs(corner.y - centre.y));
+                    }
+                }
+            }
+            if (!Number.isFinite(halfWidth + halfHeight + breadth)) continue;
+            points.set(object.instanceID, centre);
+            markers.push({id: object.instanceID, key: object.id || String(object.instanceID),
+                ...centre, halfWidth, halfHeight, breadth, maxOffset: offsetLimit(anchor),
+                nx: breadth ? (side.x - centre.x) / breadth : 1,
+                ny: breadth ? (side.y - centre.y) / breadth : 0});
+        }
+        const previous = me.londonTrainOffsets;
+        me.londonTrainOffsets = layoutLondonTrainMarkers(markers, previous);
+        // removeObject drops the logical object before the GPU fade completes.
+        // Retain its last visual slot until the renderer releases that instance.
+        const activeIDs = new Set();
+        for (const meshSet of [me.ugCarMeshSet, me.ogCarMeshSet]) {
+            const geometry = meshSet.geometry;
+            const ids = geometry.getAttribute('instanceID').array;
+            for (let i = 0; i < geometry.instanceCount; i++) {
+                const id = ids[i];
+                activeIDs.add(id);
+                if (!me.objects.has(id) && previous.has(id) && anchors.has(id)) {
+                    me.londonTrainOffsets.set(id, clampLondonTrainOffset(previous.get(id), offsetLimit(anchors.get(id))));
+                }
+            }
+        }
+        for (const id of anchors.keys()) if (!activeIDs.has(id)) anchors.delete(id);
+        for (const [id, point] of points) {
+            const offset = me.londonTrainOffsets.get(id);
+            point.x += offset.x;
+            point.y += offset.y;
+        }
+        me.ugCarMeshSet.setVisualOffsets(me.londonTrainOffsets, width, height);
+        me.ogCarMeshSet.setVisualOffsets(me.londonTrainOffsets, width, height);
+    }
+
+    onCameraChanged({trainsOnly = false} = {}) {
         const me = this,
             map = me.map,
             zoom = map.getZoom(),
@@ -213,8 +337,10 @@ export default class {
         }
         me.ugCarMeshSet.refreshCameraParams(trainCameraParams);
         me.ogCarMeshSet.refreshCameraParams(trainCameraParams);
-        me.aircraftMeshSet.refreshCameraParams(otherCameraParams);
-        me.busMeshSet.refreshCameraParams(otherCameraParams);
+        if (!trainsOnly) {
+            me.aircraftMeshSet.refreshCameraParams(otherCameraParams);
+            me.busMeshSet.refreshCameraParams(otherCameraParams);
+        }
     }
 
     setMode(viewMode, searchMode) {
@@ -383,7 +509,7 @@ export default class {
         return Promise.resolve();
     }
 
-    pickObject(mode, point) {
+    pickObject(mode, point, radius = 16) {
         const me = this,
             { pickingTexture, pixelBuffer } = me,
             { renderer, camera } = me.context,
@@ -395,7 +521,7 @@ export default class {
             // CPU fallback picking for London because the direct matrix path
             // doesn't work with camera.setViewOffset().
             let nearest = null;
-            let minDist2 = 16 * 16;
+            let minDist2 = radius * radius;
             for (const object of me.objects.values()) {
                 if (!object || object.type !== 'train') continue;
                 let pos;
@@ -405,7 +531,7 @@ export default class {
                     continue;
                 }
                 if (!pos || !pos.coord) continue;
-                const p = me.project(pos.coord, pos.altitude);
+                const p = me.londonTrainScreenPoints.get(object.instanceID) || me.project(pos.coord, pos.altitude);
                 const dx = p.x - point.x;
                 const dy = p.y - point.y;
                 const dist2 = dx * dx + dy * dy;

@@ -76,14 +76,14 @@ export default class extends BufferGeometry {
             addVertex(b, normal, [1, 0], partRole);
             addVertex(c, normal, [1, 1], partRole);
             addVertex(d, normal, [0, 1], partRole);
-            indices.push(offset, offset + 1, offset + 2, offset, offset + 2, offset + 3);
+            indices.push(offset, offset + 2, offset + 1, offset, offset + 3, offset + 2);
         };
         const addTriangle = (a, b, c, normal, partRole) => {
             const offset = positions.length / 3;
             addVertex(a, normal, [0.5, 0.5], partRole);
             addVertex(b, normal, [0, 0], partRole);
             addVertex(c, normal, [1, 0], partRole);
-            indices.push(offset, offset + 1, offset + 2);
+            indices.push(offset, offset + 2, offset + 1);
         };
         const addBox = ({width, length, height, x = 0, y = 0, z = 0, partRole}) => {
             const x0 = x - width / 2;

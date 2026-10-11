@@ -163,6 +163,8 @@ export default class {
         const rad = MathUtils.degToRad(mbox.getBearing() + 30);
         light.position.set(-Math.sin(rad), -Math.cos(rad), SQRT3).normalize();
 
+        // Presentation layout needs this frame's camera, including resize/rotation.
+        if (this.implementation.beforeRender) this.implementation.beforeRender();
         renderer.resetState();
         renderer.render(scene, camera);
     }
