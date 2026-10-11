@@ -1,4 +1,4 @@
-import {AdditiveBlending, BackSide, BoxGeometry, Mesh, MeshLambertMaterial, MultiplyBlending, ShaderMaterial, SphereGeometry} from 'three';
+import {AdditiveBlending, BackSide, DynamicDrawUsage, InstancedBufferAttribute, BoxGeometry, Mesh, MeshLambertMaterial, MultiplyBlending, ShaderMaterial, SphereGeometry} from 'three';
 import CarGeometry from './car-geometry.js';
 import InstancedGeometry from './instanced-geometry.js';
 import LondonTubeCarGeometry, {LONDON_TUBE_MARKER_PROFILE} from './london-tube-car-geometry.js';
@@ -8,7 +8,7 @@ import {
     resolveCarDimensions,
     resolveCarModelScales
 } from '../helpers/train-marker-visuals.mjs';
-import {updateVertexShader, updateFragmentShader} from './shaders.js';
+import {updateVertexShader, updateFragmentShader, offsetLondonTrainVertexShader} from './shaders.js';
 import delayMarkerFragmentShader from './delay-marker-fragment.glsl';
 import delayMarkerVertexShader from './delay-marker-vertex.glsl';
 import outlineFragmentShader from './outline-fragment.glsl';
@@ -56,6 +56,7 @@ export default class extends MeshSet {
         material.onBeforeCompile = shader => {
             Object.assign(shader.uniforms, me.getUniforms());
             shader.vertexShader = updateVertexShader(shader.vertexShader);
+            if (isLondonTube) shader.vertexShader = offsetLondonTrainVertexShader(shader.vertexShader);
             shader.fragmentShader = updateFragmentShader(shader.fragmentShader);
             shader.defines = {
                 CAR: true,
@@ -71,7 +72,7 @@ export default class extends MeshSet {
 
         const pickingMaterial = me.pickingMaterial = new ShaderMaterial({
             uniforms: me.getUniforms(),
-            vertexShader: pickingVertexShader,
+            vertexShader: isLondonTube ? offsetLondonTrainVertexShader(pickingVertexShader) : pickingVertexShader,
             fragmentShader: pickingFragmentShader,
             defines: {CAR: true}
         });
@@ -93,7 +94,7 @@ export default class extends MeshSet {
                 modelScale: me.delayMarkerModelScale,
                 base: {value: 1}
             },
-            vertexShader: delayMarkerVertexShader,
+            vertexShader: isLondonTube ? offsetLondonTrainVertexShader(delayMarkerVertexShader) : delayMarkerVertexShader,
             fragmentShader: delayMarkerFragmentShader,
             blending: MultiplyBlending,
             depthWrite: false
@@ -122,7 +123,7 @@ export default class extends MeshSet {
                 tracked: {value: -1},
                 intensity: {value: 0}
             },
-            vertexShader: outlineVertexShader,
+            vertexShader: isLondonTube ? offsetLondonTrainVertexShader(outlineVertexShader) : outlineVertexShader,
             fragmentShader: outlineFragmentShader,
             defines: {CAR: true},
             transparent: true,
@@ -134,6 +135,29 @@ export default class extends MeshSet {
         outlineMesh.updateMatrix();
         outlineMesh.matrixAutoUpdate = false;
         outlineMesh.frustumCulled = false;
+
+        if (isLondonTube) {
+            for (const target of [geometry, outlineGeometry, delayMarkerGeometry]) {
+                target.setAttribute('londonOffset', new InstancedBufferAttribute(
+                    new Float32Array(target.getAttribute('instanceID').count * 2), 2
+                ).setUsage(DynamicDrawUsage));
+            }
+        }
+    }
+
+    setVisualOffsets(offsets, width, height) {
+        if (!this.markerStyle) return;
+        for (const geometry of [this.geometry, this.outlineGeometry, this.delayMarkerGeometry]) {
+            const ids = geometry.getAttribute('instanceID').array;
+            const attribute = geometry.getAttribute('londonOffset');
+            for (let i = 0; i < geometry.instanceCount; i++) {
+                const offset = offsets.get(ids[i]);
+                attribute.array[i * 2] = offset ? offset.x * 2 / width : 0;
+                attribute.array[i * 2 + 1] = offset ? -offset.y * 2 / height : 0;
+            }
+            attribute.addUpdateRange(0, geometry.instanceCount * 2);
+            attribute.needsUpdate = true;
+        }
     }
 
     refreshCameraParams(params) {

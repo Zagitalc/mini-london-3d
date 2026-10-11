@@ -149,3 +149,20 @@ test('London Tube profile defines a complete formation outline', () => {
     assert.ok(LONDON_TUBE_MARKER_PROFILE.outlinePadding >= 0.025);
     assert.ok(LONDON_TUBE_MARKER_PROFILE.outlinePadding <= 0.035);
 });
+
+test('London Tube faces point outward for visible and picking front-face culling', () => {
+    const geometry = new LondonTubeCarGeometry();
+    const p = geometry.getAttribute('position').array;
+    const n = geometry.getAttribute('normal').array;
+    const indices = geometry.index.array;
+
+    for (let i = 0; i < indices.length; i += 3) {
+        const [a, b, c] = [indices[i], indices[i + 1], indices[i + 2]].map(v => v * 3);
+        const ab = [p[b] - p[a], p[b + 1] - p[a + 1], p[b + 2] - p[a + 2]];
+        const ac = [p[c] - p[a], p[c + 1] - p[a + 1], p[c + 2] - p[a + 2]];
+        const cross = [ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0]];
+        const dot = cross[0] * n[a] + cross[1] * n[a + 1] + cross[2] * n[a + 2];
+
+        assert.ok(dot > 0, `triangle ${i / 3} faces inward`);
+    }
+});

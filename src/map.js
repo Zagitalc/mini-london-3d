@@ -1788,6 +1788,8 @@ export default class extends Evented {
             if (me.getCityFromLocation() !== 'london') {
                 return null;
             }
+            // A direct hit on a visible train takes priority over the station beneath it.
+            if (me.trafficLayer.pickObject('ground', point, 6)) return null;
             const hitLayers = ['london-stations', 'london-station-pills', 'london-station-links']
                 .filter(id => map.getLayer(id));
             if (!hitLayers.length) {
@@ -1808,7 +1810,7 @@ export default class extends Evented {
                     const stationHoverHit = map.queryRenderedFeatures(e.point, {
                         layers: hoverLayers
                     })[0];
-                    if (stationHoverHit) {
+                    if (stationHoverHit && !me.trafficLayer.pickObject('ground', e.point, 6)) {
                         if (isStation(me.markedObject)) {
                             me.markObject();
                         }
@@ -5053,7 +5055,7 @@ export default class extends Evented {
                 if (!map.getLayer(layerId)) continue;
                 boundAny = true;
                 map.on('mousemove', layerId, (e) => {
-                    if (isStation(me.trackedObject)) {
+                    if (me.trafficLayer.pickObject('ground', e.point, 6) || isStation(me.trackedObject)) {
                         hidePopup(stationPopup);
                         return;
                     }
@@ -7811,7 +7813,10 @@ export default class extends Evented {
         if (isVehicle(markedObject)) {
             const bearing = markedObject === me.trackedObject ? map.getBearing() : undefined;
 
-            popup.setLngLat(me.adjustCoord(markedObject.coord, markedObject.altitude, bearing));
+            const trainPoint = me.getCityFromLocation() === 'london' && markedObject.type === 'train' &&
+                me.trafficLayer.londonTrainScreenPoints.get(markedObject.instanceID);
+            popup.setLngLat(trainPoint ? map.unproject(trainPoint) :
+                me.adjustCoord(markedObject.coord, markedObject.altitude, bearing));
             if (setHTML) {
                 popup.setHTML(
                     markedObject.type === 'train' ? me.getTrainDescription(markedObject) :
