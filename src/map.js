@@ -44,7 +44,7 @@ import { drawLondonPillImage, LONDON_PILL_MAX_LINES, LONDON_PILL_PIXEL_RATIO, lo
 import { londonBaseMapPaintUpdates, londonDarkLineColour, londonEmissiveUpdates, londonLightingTime, londonRailLineColourExpression } from './helpers/london-map-theme.mjs';
 import { describeLondonStationFacilities } from './helpers/london-station-facilities.mjs';
 import { describeLondonStationStories } from './helpers/london-station-stories.mjs';
-import {londonStationTopologyHTML, londonStationTopologyRouteHTML} from './helpers/london-station-topology.mjs';
+import {londonStationTopologyDestinationOptionsHTML, londonStationTopologyHTML, londonStationTopologyRouteHTML} from './helpers/london-station-topology.mjs';
 import {
     LONDON_TUBE_LINE_IDS,
     extractLondonClosures,
@@ -3136,7 +3136,11 @@ export default class extends Evented {
         const me = this;
 
         if (!me._londonStationTopologyPromise) {
-            me._londonStationTopologyPromise = helpers.loadJSON(`${me.dataUrl}/station-topology.json.gz`)
+            me._londonStationTopologyPromise = Promise.all([
+                helpers.loadJSON(`${me.dataUrl}/station-topology.json.gz`),
+                helpers.loadJSON(`${me.dataUrl}/baker-street-map.json.gz`).catch(() => null)
+            ])
+                .then(([data, context]) => data ? {...data, context} : null)
                 .catch(() => null)
                 .then(data => {
                     me._londonStationTopology = data || null;
@@ -3309,9 +3313,8 @@ export default class extends Evented {
             if (!card || !result) return;
             const from = card.querySelector('[data-topology-role="from"]');
             const to = card.querySelector('[data-topology-role="to"]');
-            if (from.value === to.value) {
-                const alternate = [...to.options].find(option => option.value !== from.value);
-                if (alternate) to.value = alternate.value;
+            if (control.dataset.topologyRole === 'from') {
+                to.innerHTML = londonStationTopologyDestinationOptionsHTML(me._londonStationTopology, from.value, to.value);
             }
             me._londonStationTopologySelection = {from: from.value, to: to.value};
             result.innerHTML = londonStationTopologyRouteHTML(me._londonStationTopology, from.value, to.value);
@@ -4085,7 +4088,10 @@ export default class extends Evented {
             me.loadLondonStationTopology();
         }
         const stationTopology = isBakerStreet ? me._londonStationTopology : null;
-        const stationTopologySection = isBakerStreet ? (stationTopology
+        const previousTopologyCard = stationTopology && me._londonStationDrawerScrollState?.selectionId === selection.id
+            ? ui.drawerBody.querySelector('.london-topology-card') : null;
+        const reusableTopologyCard = previousTopologyCard?.querySelector('.london-topology-select') ? previousTopologyCard : null;
+        const stationTopologySection = reusableTopologyCard ? '<div class="london-topology-slot"></div>' : isBakerStreet ? (stationTopology
             ? londonStationTopologyHTML(stationTopology, me._londonStationTopologySelection)
             : `<section class="london-drawer-section london-topology-card"><div class="london-section-heading-row"><h3>Station route map</h3><span class="london-topology-source">TfL topology</span></div><p class="london-topology-copy">${me._londonStationTopologyLoaded ? 'Baker Street station paths could not be loaded.' : 'Loading Baker Street station paths…'}</p></section>`) : '';
         const stationStatuses = me.getLondonStationStatusRecords(selection);
@@ -4120,6 +4126,7 @@ export default class extends Evented {
             '</span>'
         ].join('')).join('');
         ui.drawerBody.innerHTML = [
+            stationTopologySection,
             '<section class="london-drawer-section">',
             (disruptedStatuses.length ? disruptedStatuses.map(record => [
                 `<div class="london-status-alert ${getLondonStatusTone(record.statusText)}">`,
@@ -4169,7 +4176,6 @@ export default class extends Evented {
                 ].join('')).join('') :
                 '<div class="london-empty-state">No live arrival data is available for this station right now.</div>'),
             '</section>',
-            stationTopologySection,
             '<div class="london-section-divider"></div>',
             '<section class="london-drawer-section">',
             '<div class="london-section-heading-row">',
@@ -4208,6 +4214,9 @@ export default class extends Evented {
                 '</section>'
             ].join('') : ''
         ].join('');
+        if (reusableTopologyCard) {
+            ui.drawerBody.querySelector('.london-topology-slot').replaceWith(reusableTopologyCard);
+        }
         ui.drawerCenter.textContent = stationMapLabel;
         ui.drawerUpdated.textContent = `Last updated ${updatedLabel}`;
         ui.drawerBody.scrollTop = Math.min(previousScrollTop, Math.max(0, ui.drawerBody.scrollHeight - ui.drawerBody.clientHeight));
@@ -4216,7 +4225,9 @@ export default class extends Evented {
             scrollTop: ui.drawerBody.scrollTop
         };
 
-        if (activeElementWasInDrawer && !activeElement.isConnected) {
+        if (reusableTopologyCard?.contains(activeElement)) {
+            activeElement.focus({preventScroll: true});
+        } else if (activeElementWasInDrawer && !activeElement.isConnected) {
             ui.drawerClose.focus();
         }
     }

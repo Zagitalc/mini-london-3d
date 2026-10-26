@@ -6,11 +6,14 @@ import {
     findLondonStationPath,
     getPlatformAreas,
     getStreetAreas,
+    londonStationTopologyDestinationOptionsHTML,
     londonStationTopologyHTML,
     londonStationTopologyRouteHTML
 } from '../src/helpers/london-station-topology.mjs';
+import {createLondonStationProjection} from '../src/helpers/london-station-map.mjs';
 
 const topology = JSON.parse(gunzipSync(readFileSync(new URL('../assets/london-build-data/station-topology.json.gz', import.meta.url))));
+const context = JSON.parse(gunzipSync(readFileSync(new URL('../assets/london-build-data/baker-street-map.json.gz', import.meta.url))));
 
 test('Baker Street snapshot exposes Tube platforms and non-bus street links', () => {
     assert.equal(topology.stationId, '940GZZLUBST');
@@ -34,12 +37,40 @@ test('interchange route follows directed footpaths and includes walkway type and
 });
 
 test('route panel explains unnamed street connections and supports saved selections', () => {
-    const html = londonStationTopologyHTML(topology, {from: '6', to: '10'});
+    const html = londonStationTopologyHTML({...topology, context}, {from: '6', to: '10'});
 
     assert.match(html, /Starting platform/);
     assert.match(html, /Destination platform or street access/);
     assert.match(html, /Street access · A-M-N/);
-    assert.match(html, /Street links are unnamed in TfL’s source/);
+    assert.match(html, /Street links use TfL’s codes/);
     assert.match(html, /value="6" selected/);
     assert.match(html, /value="10" selected/);
+});
+
+test('street map and underground route share a metre-based geographic projection', () => {
+    const {project, metresToPixels} = createLondonStationProjection(context.bounds);
+    const [west, south, east, north] = context.bounds;
+    for (const area of [...getPlatformAreas(topology), ...getStreetAreas(topology)]) {
+        assert.ok(area.point.longitude >= west && area.point.longitude <= east);
+        assert.ok(area.point.latitude >= south && area.point.latitude <= north);
+    }
+    const centre = [(west + east) / 2, (south + north) / 2];
+    const east50m = [centre[0] + 50 / (111319.49 * Math.cos(centre[1] * Math.PI / 180)), centre[1]];
+    const north50m = [centre[0], centre[1] + 50 / 111319.49];
+    assert.ok(Math.abs(project(east50m)[0] - project(centre)[0] - 50 * metresToPixels) < 1e-7);
+    assert.ok(Math.abs(project(centre)[1] - project(north50m)[1] - 50 * metresToPixels) < 1e-7);
+    assert.ok(context.features.some(feature => feature.name === 'Baker Street' && feature.kind === 'road'));
+    assert.ok(context.features.some(feature => feature.name === 'Marylebone Road' && feature.kind === 'road'));
+    const html = londonStationTopologyRouteHTML({...topology, context}, '2', '10');
+    assert.match(html, /london-topology-basemap-building/);
+    assert.match(html, /Marylebone Road/);
+    assert.match(html, /https:\/\/www.openstreetmap.org\/copyright/);
+    assert.doesNotMatch(html, /NaN|Infinity/);
+});
+
+test('changing origin restores its previous platform as a destination and avoids self-routes', () => {
+    const options = londonStationTopologyDestinationOptionsHTML(topology, '6', '6');
+    assert.match(options, /value="2"/);
+    assert.doesNotMatch(options, /value="6"/);
+    assert.match(options, /value="10" selected/);
 });

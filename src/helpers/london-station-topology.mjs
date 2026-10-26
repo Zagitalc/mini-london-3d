@@ -1,5 +1,6 @@
 // Baker Street's preloaded TfL Stop Structure snapshot. The source provides
 // navigable points and connections, not architectural floor-plan polygons.
+import {londonStationMapHTML} from './london-station-map.mjs';
 
 const TUBE_MODE = '2';
 
@@ -10,6 +11,8 @@ const LINE_NAMES = {
     JUB: 'Jubilee',
     MET: 'Metropolitan'
 };
+
+const LINE_COLOURS = {BAK: '#b36305', CIR: '#d7ac00', HAM: '#e798b3', JUB: '#6b7479', MET: '#9b0056'};
 
 const PATH_NAMES = {
     LEVEL: 'walkway',
@@ -62,7 +65,7 @@ function areaLabel(area, kind = 'platform') {
     if (kind === 'street') {
         return `Street access · ${area.name || 'unnamed'}`;
     }
-    return `${lineLabel}${direction ? ` · ${direction}` : ''} · ${area.name}`;
+    return `${lineLabel}${direction ? ` · ${direction}` : ''}` || area.name;
 }
 
 /**
@@ -123,20 +126,6 @@ export function findLondonStationPath(data, fromId, toId) {
     return {areas, paths, duration: best.get(destination)};
 }
 
-function projectPoint(point, bounds, width, height, padding) {
-    const xRange = Math.max(bounds.maxX - bounds.minX, 1e-7);
-    const yRange = Math.max(bounds.maxY - bounds.minY, 1e-7);
-    const scale = Math.min((width - padding * 2) / xRange, (height - padding * 2) / yRange);
-    const drawWidth = xRange * scale;
-    const drawHeight = yRange * scale;
-    const offsetX = (width - drawWidth) / 2;
-    const offsetY = (height - drawHeight) / 2;
-    return [
-        offsetX + (point.longitude - bounds.minX) * scale,
-        height - offsetY - (point.latitude - bounds.minY) * scale
-    ];
-}
-
 function getPathPoints(data, route) {
     const areaById = new Map((data.areas || []).map(area => [String(area.id), area]));
     const points = [];
@@ -160,61 +149,48 @@ function renderRoute(data, fromId, toId) {
     const allAreas = data.areas || [];
     const platforms = getPlatformAreas(data);
     const streetAreas = getStreetAreas(data);
-    const selectedIds = new Set([String(fromId), String(toId)]);
     const points = getPathPoints(data, route || {paths: []});
-    const areaPoints = allAreas.filter(area => Number.isFinite(area.point?.longitude) && Number.isFinite(area.point?.latitude));
-    const coordinateSet = [...areaPoints.map(area => area.point), ...points];
-    const bounds = coordinateSet.reduce((result, point) => ({
-        minX: Math.min(result.minX, point.longitude),
-        maxX: Math.max(result.maxX, point.longitude),
-        minY: Math.min(result.minY, point.latitude),
-        maxY: Math.max(result.maxY, point.latitude)
-    }), {minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity});
-    const width = 320;
-    const height = 170;
-    const padding = 16;
-    const svgParts = [];
-
-    if (route && points.length > 1) {
-        const polyline = points.map(point => projectPoint(point, bounds, width, height, padding).join(',')).join(' ');
-        svgParts.push(`<polyline class="london-topology-route-line" points="${polyline}"/>`);
-    }
-    for (const area of platforms) {
-        const position = projectPoint(area.point, bounds, width, height, padding);
-        const isSelected = selectedIds.has(String(area.id));
-        svgParts.push(`<circle class="london-topology-node platform${isSelected ? ' selected' : ''}" cx="${position[0]}" cy="${position[1]}" r="${isSelected ? 6 : 4}"/>`);
-    }
-    for (const area of streetAreas) {
-        const position = projectPoint(area.point, bounds, width, height, padding);
-        const isSelected = selectedIds.has(String(area.id));
-        svgParts.push(`<rect class="london-topology-node street${isSelected ? ' selected' : ''}" x="${position[0] - 4}" y="${position[1] - 4}" width="8" height="8" rx="2"/>`);
-    }
+    const nodes = [...platforms, ...streetAreas].map(area => ({
+        id: area.id,
+        point: area.point,
+        kind: streetAreas.includes(area) ? 'street' : 'platform',
+        label: areaLabel(area, streetAreas.includes(area) ? 'street' : 'platform'),
+        colour: LINE_COLOURS[(area.lines || []).find(line => line.mode === TUBE_MODE)?.symbol] || '#555'
+    }));
+    const map = londonStationMapHTML(data.context, nodes, points, fromId, toId);
 
     if (!route) {
         return [
             '<div class="london-topology-empty">No walking path is listed between these two areas.</div>',
-            `<svg class="london-topology-map" viewBox="0 0 ${width} ${height}" role="img" aria-label="Baker Street platforms and street access points">`,
-            ...svgParts,
-            '</svg>'
+            map
         ].join('');
     }
 
     const pathTypes = [...new Set(route.paths.flatMap(path => (path.parts || []).map(part => part.type)))]
         .map(type => PATH_NAMES[type] || 'walkway');
     const areaById = new Map(allAreas.map(area => [String(area.id), area]));
+    const start = areaById.get(String(fromId));
     const destination = areaById.get(String(toId));
     const destinationKind = streetAreas.some(area => String(area.id) === String(toId)) ? 'street' : 'platform';
     const routeDescription = pathTypes.length ? pathTypes.join(' · ') : 'walkway';
     const minutes = Math.max(1, Math.round(route.duration));
+    const levelLabel = area => area?.level === 0 ? 'Street level' : `Level ${area?.level ?? 'unknown'}`;
+    const steps = route.paths.flatMap(path => path.parts || []).map(part => {
+        const startLevel = part.points?.[0]?.level;
+        const endLevel = part.points?.[part.points.length - 1]?.level;
+        const movement = PATH_NAMES[part.type] || 'walkway';
+        return `${movement[0].toUpperCase()}${movement.slice(1)}${Number.isFinite(startLevel) && Number.isFinite(endLevel) ? ` · level ${startLevel} → ${endLevel}` : ''}`;
+    });
 
     return [
-        `<div class="london-topology-route-summary"><strong>${minutes} min</strong><span>${escapeHTML(routeDescription)}</span></div>`,
-        `<p class="london-topology-destination">To ${escapeHTML(destination ? areaLabel(destination, destinationKind) : 'selected area')}</p>`,
-        `<svg class="london-topology-map" viewBox="0 0 ${width} ${height}" role="img" aria-label="Schematic route through Baker Street station">`,
-        '<title>Selected route through Baker Street station</title>',
-        ...svgParts,
-        '</svg>',
-        '<div class="london-topology-legend"><span><i class="platform"></i>Tube platform</span><span><i class="street"></i>Street connection</span></div>'
+        `<div class="london-topology-route-summary" aria-live="polite" aria-atomic="true"><strong>${minutes} min</strong><span>${escapeHTML(routeDescription)}</span></div>`,
+        map,
+        '<div class="london-topology-endpoints">',
+        `<div><span class="london-topology-endpoint-number start">1</span><p><strong>${escapeHTML(start ? areaLabel(start) : 'Starting platform')}</strong><small>${escapeHTML(levelLabel(start))}</small></p></div>`,
+        `<div><span class="london-topology-endpoint-number end">2</span><p><strong>${escapeHTML(destination ? areaLabel(destination, destinationKind) : 'Destination')}</strong><small>${escapeHTML(levelLabel(destination))}</small></p></div>`,
+        '</div>',
+        '<div class="london-topology-legend"><span><i class="route"></i>Underground route</span><span><i class="street"></i>Street connection</span></div>',
+        `<details class="london-topology-steps"><summary>Route steps · ${steps.length}</summary><ol>${steps.map(step => `<li>${escapeHTML(step)}</li>`).join('')}</ol></details>`
     ].join('');
 }
 
@@ -244,18 +220,19 @@ export function londonStationTopologyHTML(data, selection = {}) {
 
     return [
         '<section class="london-drawer-section london-topology-card">',
-        '<div class="london-section-heading-row"><h3>Station route map</h3><span class="london-topology-source">TfL topology</span></div>',
-        '<p class="london-topology-copy">Choose platforms to see the quickest listed walking route.</p>',
+        '<div class="london-section-heading-row"><h3>Station route map</h3><span class="london-topology-source">Baker Street</span></div>',
+        '<p class="london-topology-copy">Find a platform or street connection on the map.</p>',
         '<div class="london-topology-controls">',
         '<label>From<select class="london-topology-select" data-topology-role="from" aria-label="Starting platform">',
         options(platforms, fromId, () => 'platform'),
         '</select></label>',
         '<label>To<select class="london-topology-select" data-topology-role="to" aria-label="Destination platform or street access">',
-        options(destinations, toId, area => streetAreas.includes(area) ? 'street' : 'platform'),
+        londonStationTopologyDestinationOptionsHTML(data, fromId, toId),
         '</select></label>',
         '</div>',
         `<div class="london-topology-result">${londonStationTopologyRouteHTML(data, fromId, toId)}</div>`,
-        '<p class="london-topology-note">Street links are unnamed in TfL’s source; this schematic does not show corridor shapes.</p>',
+        '<p class="london-topology-note">Underground paths are shown over the street map; corridor shapes are approximate. Street links use TfL’s codes.</p>',
+        '<p class="london-topology-note">Data provided by Transport for London.</p>',
         '</section>'
     ].join('');
 }
@@ -269,6 +246,20 @@ export function londonStationTopologyHTML(data, selection = {}) {
  */
 export function londonStationTopologyRouteHTML(data, fromId, toId) {
     return renderRoute(data, fromId, toId);
+}
+
+/**
+ * Refreshes destinations when the origin changes without replacing either select.
+ * @param {Object} data - Station topology.
+ * @param {string} fromId - Starting platform.
+ * @param {string} toId - Preferred destination, if still valid.
+ * @returns {string} Options with a valid selected destination.
+ */
+export function londonStationTopologyDestinationOptionsHTML(data, fromId, toId) {
+    const streetAreas = getStreetAreas(data);
+    const destinations = [...streetAreas, ...getPlatformAreas(data).filter(area => String(area.id) !== String(fromId))];
+    const selectedId = destinations.some(area => String(area.id) === String(toId)) ? String(toId) : String(destinations[0]?.id);
+    return destinations.map(area => `<option value="${escapeHTML(area.id)}"${String(area.id) === selectedId ? ' selected' : ''}>${escapeHTML(areaLabel(area, streetAreas.includes(area) ? 'street' : 'platform'))}</option>`).join('');
 }
 
 export {getPlatformAreas, getStreetAreas};
