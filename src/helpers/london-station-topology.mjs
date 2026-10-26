@@ -4,6 +4,15 @@ import {londonStationMapHTML} from './london-station-map.mjs';
 
 const TUBE_MODE = '2';
 
+// Checked against TfL's Baker Street arrivals platform labels on 26 Oct 2026.
+// Metropolitan areas are aggregate source groups, not platforms 1–4.
+const BAKER_STREET_PLATFORMS = {
+    BakSB: {symbol: 'BAK', number: 8}, BakNB: {symbol: 'BAK', number: 9},
+    HamEB: {symbol: 'HAM', number: 5}, HamWB: {symbol: 'HAM', number: 6},
+    JubSB: {symbol: 'JUB', number: 7}, JubNB: {symbol: 'JUB', number: 10}
+};
+const BAKER_STREET_SOURCE = 'https://tfl.gov.uk/tube/stop/940GZZLUBST/baker-street-underground-station';
+
 const LINE_NAMES = {
     BAK: 'Bakerloo',
     CIR: 'Circle',
@@ -57,13 +66,22 @@ function directionLabel(areaName) {
     return ({NB: 'northbound', SB: 'southbound', EB: 'eastbound', WB: 'westbound'})[match && match[1]] || '';
 }
 
-function areaLabel(area, kind = 'platform') {
+function areaLabel(area, kind = 'platform', data) {
     const lines = getTubeLines(area);
     const direction = directionLabel(area.name);
     const lineLabel = lines.length ? lines.join(' + ') : '';
 
     if (kind === 'street') {
         return `Street access · ${area.name || 'unnamed'}`;
+    }
+    if (data?.stationId === '940GZZLUBST') {
+        if (['MetWB', 'MetEB'].includes(area.name) && (area.lines || []).some(line => line.symbol === 'MET' && line.mode === TUBE_MODE)) {
+            return `Metropolitan · ${area.name} group`;
+        }
+        const reference = BAKER_STREET_PLATFORMS[area.name];
+        if (reference && (area.lines || []).some(line => line.symbol === reference.symbol && line.mode === TUBE_MODE)) {
+            return `Platform ${reference.number} · ${lineLabel} · ${direction}`;
+        }
     }
     return `${lineLabel}${direction ? ` · ${direction}` : ''}` || area.name;
 }
@@ -79,6 +97,8 @@ export function findLondonStationPath(data, fromId, toId) {
     if (!data || fromId == null || toId == null) return null;
     const start = String(fromId);
     const destination = String(toId);
+    const ids = new Set((data.areas || []).map(area => String(area.id)));
+    if (!ids.has(start) || !ids.has(destination)) return null;
     if (start === destination) return {areas: [start], paths: [], duration: 0};
 
     const best = new Map([[start, 0]]);
@@ -101,7 +121,8 @@ export function findLondonStationPath(data, fromId, toId) {
         for (const edge of data.paths || []) {
             if (String(edge.from) !== current) continue;
             const next = String(edge.to);
-            const edgeCost = Number(edge.duration);
+            if (!ids.has(next)) continue;
+            const edgeCost = edge.duration;
             if (!Number.isFinite(edgeCost) || edgeCost < 0) continue;
             const candidateCost = currentCost + edgeCost;
             if (candidateCost < (best.get(next) ?? Infinity)) {
@@ -196,7 +217,7 @@ function renderRoute(data, fromId, toId) {
         id: area.id,
         point: area.point,
         kind: streetAreas.includes(area) ? 'street' : 'platform',
-        label: areaLabel(area, streetAreas.includes(area) ? 'street' : 'platform'),
+        label: areaLabel(area, streetAreas.includes(area) ? 'street' : 'platform', data),
         colour: LINE_COLOURS[(area.lines || []).find(line => line.mode === TUBE_MODE)?.symbol] || '#555'
     }));
     const map = londonStationMapHTML(data.context, nodes, points, fromId, toId);
@@ -224,14 +245,18 @@ function renderRoute(data, fromId, toId) {
     });
 
     return [
-        `<div class="london-topology-route-summary" aria-live="polite" aria-atomic="true"><div><strong>${minutes} min</strong><small>TfL walking estimate</small></div><span>${escapeHTML(routeDescription)}</span></div>`,
+        `<div class="london-topology-route-summary" aria-live="polite" aria-atomic="true"><div><strong>About ${minutes} min</strong><small>TfL walking estimate</small></div><span>${escapeHTML(routeDescription)}</span></div>`,
+        '<p class="london-topology-note london-topology-route-confidence">Approximate corridor geometry · TfL level codes</p>',
+        ...([start, destination].some(area => ['MetWB', 'MetEB'].includes(area?.name)) ? [
+            '<p class="london-topology-note">Metropolitan groups do not identify individual platforms 1–4. Check the departure board for your platform.</p>'
+        ] : []),
         levelTransferHTML(route, start, destination),
         map,
         '<div class="london-topology-endpoints">',
-        `<div><span class="london-topology-endpoint-number start">1</span><p><strong>${escapeHTML(start ? areaLabel(start) : 'Starting platform')}</strong><small>${escapeHTML(levelLabel(start))}</small></p></div>`,
-        `<div><span class="london-topology-endpoint-number end">2</span><p><strong>${escapeHTML(destination ? areaLabel(destination, destinationKind) : 'Destination')}</strong><small>${escapeHTML(levelLabel(destination))}</small></p></div>`,
+        `<div><span class="london-topology-endpoint-number start">1</span><p><strong>${escapeHTML(start ? areaLabel(start, 'platform', data) : 'Starting platform')}</strong><small>${escapeHTML(levelLabel(start))}</small></p></div>`,
+        `<div><span class="london-topology-endpoint-number end">2</span><p><strong>${escapeHTML(destination ? areaLabel(destination, destinationKind, data) : 'Destination')}</strong><small>${escapeHTML(levelLabel(destination))}</small></p></div>`,
         '</div>',
-        '<div class="london-topology-legend"><span><i class="route"></i>Underground route</span><span><i class="street"></i>Street connection</span></div>',
+        '<div class="london-topology-legend"><span><i class="route"></i>Schematic route</span><span><i class="street"></i>Street connection</span></div>',
         `<details class="london-topology-steps"><summary>Route steps · ${steps.length}</summary><ol>${steps.map(step => `<li>${escapeHTML(step)}</li>`).join('')}</ol></details>`
     ].join('');
 }
@@ -256,14 +281,14 @@ export function londonStationTopologyHTML(data, selection = {}) {
         : String(destinations[0]?.id || '');
     const options = (areas, selectedId, kindForArea) => areas.map(area => [
         `<option value="${escapeHTML(area.id)}"${String(area.id) === selectedId ? ' selected' : ''}>`,
-        escapeHTML(areaLabel(area, kindForArea(area))),
+        escapeHTML(areaLabel(area, kindForArea(area), data)),
         '</option>'
     ].join('')).join('');
 
     return [
         '<section class="london-drawer-section london-topology-card">',
         '<div class="london-section-heading-row"><h3>Station route map</h3><span class="london-topology-source">Baker Street</span></div>',
-        '<p class="london-topology-copy">Find a platform or street connection on the map.</p>',
+        '<p class="london-topology-copy">Compare TfL’s listed walking routes between platform areas and street connections.</p>',
         snapshotDateHTML(data),
         '<div class="london-topology-controls">',
         '<label>From<select class="london-topology-select" data-topology-role="from" aria-label="Starting platform">',
@@ -276,6 +301,11 @@ export function londonStationTopologyHTML(data, selection = {}) {
         `<div class="london-topology-result">${londonStationTopologyRouteHTML(data, fromId, toId)}</div>`,
         '<p class="london-topology-note">Underground paths are shown over the street map; corridor shapes are approximate. Street links use TfL’s codes.</p>',
         '<p class="london-topology-note">Walking estimates exclude live crowding and lift or escalator outages.</p>',
+        '<details class="london-topology-steps london-topology-evidence"><summary>Coverage and source checks</summary>',
+        '<p class="london-topology-note">Eight platform areas are represented. Metropolitan areas group multiple platforms; street links retain unnamed TfL codes. Level numbers are source codes, not measured depths or a count of floors.</p>',
+        '<p class="london-topology-note">Connections, levels and walking estimates match the supplied TfL Stop Structure snapshot. Corridor shapes and walking times have not been checked on site.</p>',
+        ...(data.stationId === '940GZZLUBST' ? [`<p class="london-topology-note">Six platform numbers and directions checked against <a href="${BAKER_STREET_SOURCE}">TfL’s station information</a> on <time datetime="2026-10-26">26 Oct 2026</time>. Metropolitan platform numbers are unresolved.</p>`] : []),
+        '</details>',
         '<p class="london-topology-note">Data provided by Transport for London.</p>',
         '</section>'
     ].join('');
@@ -303,7 +333,7 @@ export function londonStationTopologyDestinationOptionsHTML(data, fromId, toId) 
     const streetAreas = getStreetAreas(data);
     const destinations = [...streetAreas, ...getPlatformAreas(data).filter(area => String(area.id) !== String(fromId))];
     const selectedId = destinations.some(area => String(area.id) === String(toId)) ? String(toId) : String(destinations[0]?.id);
-    return destinations.map(area => `<option value="${escapeHTML(area.id)}"${String(area.id) === selectedId ? ' selected' : ''}>${escapeHTML(areaLabel(area, streetAreas.includes(area) ? 'street' : 'platform'))}</option>`).join('');
+    return destinations.map(area => `<option value="${escapeHTML(area.id)}"${String(area.id) === selectedId ? ' selected' : ''}>${escapeHTML(areaLabel(area, streetAreas.includes(area) ? 'street' : 'platform', data))}</option>`).join('');
 }
 
 export {getPlatformAreas, getStreetAreas};

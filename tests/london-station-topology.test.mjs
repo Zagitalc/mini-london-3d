@@ -96,5 +96,81 @@ test('snapshot dates use source metadata, fall back safely and never imply a liv
     assert.match(fallback, /datetime="2026-10-25">25 Oct 2026/);
     const unknown = londonStationTopologyHTML({...topology, dataBuild: '2026-02-31', generatedAt: null});
     assert.match(unknown, /Station paths snapshot date unavailable/);
-    assert.doesNotMatch(unknown, /Invalid Date|datetime=/);
+    assert.doesNotMatch(unknown.match(/<p class="london-topology-freshness">.*?<\/p>/)?.[0] || '', /Invalid Date|datetime=/);
+});
+
+
+test('six numbered platform labels match the reviewed TfL platform/direction references', () => {
+    const html = londonStationTopologyHTML(topology);
+    for (const [number, line, direction] of [
+        [8, 'Bakerloo', 'southbound'], [9, 'Bakerloo', 'northbound'],
+        [5, 'Circle + Hammersmith &amp; City', 'eastbound'], [6, 'Circle + Hammersmith &amp; City', 'westbound'],
+        [7, 'Jubilee', 'southbound'], [10, 'Jubilee', 'northbound']
+    ]) assert.ok(html.includes(`Platform ${number} · ${line} · ${direction}`));
+    assert.match(html, /Coverage and source checks/);
+    assert.match(html, /not been checked on site/);
+    assert.match(html, /Level numbers are source codes/);
+    assert.doesNotMatch(londonStationTopologyHTML({...topology, stationId: 'OTHER'}), /Platform 8 ·/);
+});
+
+test('Metropolitan groups never imply a specific numbered platform or a verified passenger direction', () => {
+    const html = londonStationTopologyRouteHTML(topology, '8', '9');
+    assert.match(html, /Metropolitan · MetWB group/);
+    assert.match(html, /Metropolitan · MetEB group/);
+    assert.match(html, /do not identify individual platforms 1–4/);
+    assert.doesNotMatch(html, /Metropolitan · (westbound|eastbound)/);
+    assert.match(html, /Approximate corridor geometry/);
+    assert.match(html, /About \d+ min/);
+});
+
+test('every source path has valid directed endpoints, durations and continuous source levels', () => {
+    const areas = new Map(topology.areas.map(area => [area.id, area]));
+    for (const path of topology.paths) {
+        assert.ok(areas.has(path.from) && areas.has(path.to));
+        assert.ok(Number.isFinite(path.duration) && path.duration >= 0);
+        assert.ok(path.parts.length);
+        const first = path.parts[0].points[0];
+        const lastPart = path.parts.at(-1);
+        const last = lastPart.points.at(-1);
+        assert.equal(first.areaId, path.from);
+        assert.equal(last.areaId, path.to);
+        assert.equal(first.level, areas.get(path.from).level);
+        assert.equal(last.level, areas.get(path.to).level);
+        for (let i = 1; i < path.parts.length; i++) {
+            assert.equal(path.parts[i - 1].points.at(-1).areaId, path.parts[i].points[0].areaId);
+            assert.equal(path.parts[i - 1].points.at(-1).level, path.parts[i].points[0].level);
+        }
+    }
+});
+
+test('all 88 selectable transfers match an independent all-pairs shortest-time calculation', () => {
+    const ids = topology.areas.map(area => area.id);
+    const times = new Map(ids.map(a => [a, new Map(ids.map(b => [b, a === b ? 0 : Infinity]))]));
+    for (const path of topology.paths) times.get(path.from).set(path.to, Math.min(times.get(path.from).get(path.to), path.duration));
+    for (const k of ids) for (const i of ids) for (const j of ids) {
+        times.get(i).set(j, Math.min(times.get(i).get(j), times.get(i).get(k) + times.get(k).get(j)));
+    }
+    let checked = 0;
+    for (const from of getPlatformAreas(topology)) {
+        for (const to of [...getPlatformAreas(topology), ...getStreetAreas(topology)]) {
+            if (from.id === to.id) continue;
+            const route = findLondonStationPath(topology, from.id, to.id);
+            assert.ok(route, `${from.name} to ${to.name}`);
+            assert.equal(route.duration, times.get(from.id).get(to.id));
+            assert.equal(route.paths.reduce((sum, path) => sum + path.duration, 0), route.duration);
+            assert.ok(route.paths.every(path => topology.paths.includes(path)));
+            checked++;
+        }
+    }
+    assert.equal(checked, 88);
+});
+
+test('unknown endpoints and missing travel times cannot produce invented zero-minute shortcuts', () => {
+    assert.equal(findLondonStationPath(topology, 'missing', 'missing'), null);
+    const data = {areas: [{id: 'a'}, {id: 'b'}, {id: 'c'}], paths: [
+        {from: 'a', to: 'missing', duration: 0}, {from: 'missing', to: 'b', duration: 0},
+        {from: 'a', to: 'b', duration: null}, {from: 'a', to: 'b', duration: ''},
+        {from: 'a', to: 'c', duration: 2}, {from: 'c', to: 'b', duration: 3}
+    ]};
+    assert.equal(findLondonStationPath(data, 'a', 'b').duration, 5);
 });
