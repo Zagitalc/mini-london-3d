@@ -4091,7 +4091,7 @@ export default class extends Evented {
         const previousTopologyCard = stationTopology && me._londonStationDrawerScrollState?.selectionId === selection.id
             ? ui.drawerBody.querySelector('.london-topology-card') : null;
         const reusableTopologyCard = previousTopologyCard?.querySelector('.london-topology-select') ? previousTopologyCard : null;
-        const stationTopologySection = reusableTopologyCard ? '<div class="london-topology-slot"></div>' : isBakerStreet ? (stationTopology
+        const stationTopologySection = reusableTopologyCard ? '' : isBakerStreet ? (stationTopology
             ? londonStationTopologyHTML(stationTopology, me._londonStationTopologySelection)
             : `<section class="london-drawer-section london-topology-card"><div class="london-section-heading-row"><h3>Station route map</h3><span class="london-topology-source">TfL topology</span></div><p class="london-topology-copy">${me._londonStationTopologyLoaded ? 'Baker Street station paths could not be loaded.' : 'Loading Baker Street station paths…'}</p></section>`) : '';
         const stationStatuses = me.getLondonStationStatusRecords(selection);
@@ -4125,8 +4125,7 @@ export default class extends Evented {
             escapeHTML(record.title),
             '</span>'
         ].join('')).join('');
-        ui.drawerBody.innerHTML = [
-            stationTopologySection,
+        const stationDetailsHTML = [
             '<section class="london-drawer-section">',
             (disruptedStatuses.length ? disruptedStatuses.map(record => [
                 `<div class="london-status-alert ${getLondonStatusTone(record.statusText)}">`,
@@ -4215,7 +4214,13 @@ export default class extends Evented {
             ].join('') : ''
         ].join('');
         if (reusableTopologyCard) {
-            ui.drawerBody.querySelector('.london-topology-slot').replaceWith(reusableTopologyCard);
+            // Native select popups close even if their element is removed and
+            // immediately reinserted. Keep the entire route card connected.
+            ui.drawerBody.querySelector('.london-station-live-content').innerHTML = stationDetailsHTML;
+        } else {
+            ui.drawerBody.innerHTML = isBakerStreet
+                ? `${stationTopologySection}<div class="london-station-live-content">${stationDetailsHTML}</div>`
+                : stationDetailsHTML;
         }
         ui.drawerCenter.textContent = stationMapLabel;
         ui.drawerUpdated.textContent = `Last updated ${updatedLabel}`;
@@ -4225,9 +4230,7 @@ export default class extends Evented {
             scrollTop: ui.drawerBody.scrollTop
         };
 
-        if (reusableTopologyCard?.contains(activeElement)) {
-            activeElement.focus({preventScroll: true});
-        } else if (activeElementWasInDrawer && !activeElement.isConnected) {
+        if (activeElementWasInDrawer && !activeElement.isConnected) {
             ui.drawerClose.focus();
         }
     }

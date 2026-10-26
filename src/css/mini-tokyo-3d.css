@@ -2125,6 +2125,12 @@
     padding-bottom: 8px;
     scrollbar-gutter: stable;
 }
+.mini-tokyo-3d.is-london .london-station-live-content {
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    gap: 16px;
+}
 .mini-tokyo-3d.is-london .london-section-heading-row {
     display: flex;
     align-items: center;
