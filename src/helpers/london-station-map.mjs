@@ -33,6 +33,30 @@ function pathData(coordinates, project) {
     return coordinates.map((point, index) => `${index ? 'L' : 'M'}${project(point).map(value => value.toFixed(2)).join(',')}`).join('');
 }
 
+/**
+ * Separates nearby endpoint labels while retaining their geographic anchors.
+ * @param {Array<number>} start - Projected start coordinate.
+ * @param {Array<number>} end - Projected destination coordinate.
+ * @returns {Array<Object>} Anchor and displayed position for each pin.
+ */
+export function layoutLondonStationPins(start, end) {
+    const distance = Math.hypot(end[0] - start[0], end[1] - start[1]);
+    if (distance >= 40) return [start, end].map(anchor => ({anchor, position: [...anchor], displaced: false}));
+
+    const direction = distance > 0 ? [(end[0] - start[0]) / distance, (end[1] - start[1]) / distance] : [1, 0];
+    const offset = (46 - distance) / 2;
+    const clamp = point => [Math.max(14, Math.min(WIDTH - 14, point[0])), Math.max(14, Math.min(HEIGHT - 14, point[1]))];
+    let positions = [
+        clamp([start[0] - direction[0] * offset, start[1] - direction[1] * offset]),
+        clamp([end[0] + direction[0] * offset, end[1] + direction[1] * offset])
+    ];
+    if (Math.hypot(positions[1][0] - positions[0][0], positions[1][1] - positions[0][1]) < 40) {
+        const middle = [Math.max(37, Math.min(WIDTH - 37, (start[0] + end[0]) / 2)), Math.max(14, Math.min(HEIGHT - 14, (start[1] + end[1]) / 2))];
+        positions = [[middle[0] - 23, middle[1]], [middle[0] + 23, middle[1]]];
+    }
+    return [start, end].map((anchor, index) => ({anchor, position: positions[index], displaced: true}));
+}
+
 // Clip a label candidate to the map so long OSM ways never place text offscreen.
 function visibleSegment(start, end) {
     const deltaX = end[0] - start[0];
@@ -137,6 +161,13 @@ export function londonStationMapHTML(context, nodes, points, fromId, toId) {
         fragments.push(`<path class="london-topology-route-halo" d="${route}"/>`, `<path class="london-topology-route-line" d="${route}"/>`);
     }
     const selectedIds = new Set([String(fromId), String(toId)]);
+    const startNode = nodes.find(node => String(node.id) === String(fromId));
+    const endNode = nodes.find(node => String(node.id) === String(toId));
+    const validPoint = node => Number.isFinite(node?.point?.longitude) && Number.isFinite(node?.point?.latitude);
+    const pinLayout = validPoint(startNode) && validPoint(endNode) ? layoutLondonStationPins(
+        project([startNode.point.longitude, startNode.point.latitude]),
+        project([endNode.point.longitude, endNode.point.latitude])
+    ) : null;
     const orderedNodes = [...nodes].sort((first, second) => Number(selectedIds.has(String(first.id))) - Number(selectedIds.has(String(second.id))));
     for (const node of orderedNodes) {
         if (!Number.isFinite(node.point?.longitude) || !Number.isFinite(node.point?.latitude)) continue;
@@ -144,7 +175,13 @@ export function londonStationMapHTML(context, nodes, points, fromId, toId) {
         const selected = String(node.id) === String(fromId) ? '1' : String(node.id) === String(toId) ? '2' : null;
         const title = `<title>${escapeHTML(node.label)}</title>`;
         if (selected) {
-            fragments.push(`<g class="london-topology-pin ${selected === '1' ? 'start' : 'end'}" transform="translate(${x},${y})">${title}<circle r="11"/><text text-anchor="middle" dy="4">${selected}</text></g>`);
+            const layout = pinLayout?.[selected === '1' ? 0 : 1];
+            const [pinX, pinY] = layout?.position || [x, y];
+            if (layout?.displaced) {
+                fragments.push(`<path class="london-topology-pin-leader" d="M${x},${y}L${pinX},${pinY}"/>`);
+                fragments.push(`<circle class="london-topology-pin-anchor ${selected === '1' ? 'start' : 'end'}" cx="${x}" cy="${y}" r="2.5"/>`);
+            }
+            fragments.push(`<g class="london-topology-pin ${selected === '1' ? 'start' : 'end'}" transform="translate(${pinX},${pinY})">${title}<circle r="11"/><text text-anchor="middle" dy="4">${selected}</text></g>`);
         } else if (node.kind === 'street') {
             fragments.push(`<rect class="london-topology-node street" x="${x - 3.5}" y="${y - 3.5}" width="7" height="7" rx="1.5">${title}</rect>`);
         } else {
@@ -159,7 +196,9 @@ export function londonStationMapHTML(context, nodes, points, fromId, toId) {
         '<figcaption class="london-topology-attribution">',
         `<span>${features.length ? 'Street map · north up' : 'Street map unavailable'}</span>`,
         '<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap</a>',
-        '</figcaption></figure>'
+        '</figcaption>',
+        pinLayout?.[0].displaced ? '<p class="london-topology-pin-note">Pins separated for clarity; thin lines show their locations.</p>' : '',
+        '</figure>'
     );
     return fragments.join('');
 }

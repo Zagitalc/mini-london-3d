@@ -144,6 +144,48 @@ function getPathPoints(data, route) {
     return points;
 }
 
+function levelLabel(area) {
+    return area?.level === 0 ? 'Street level' : `Level ${area?.level ?? 'unknown'}`;
+}
+
+function levelTransferHTML(route, start, destination) {
+    if (!Number.isFinite(start?.level) || !Number.isFinite(destination?.level) || start.level === destination.level) return '';
+    const verticalParts = route.paths.flatMap(path => path.parts || []).filter(part => {
+        const levels = [part.points?.[0]?.level, part.points?.[part.points.length - 1]?.level];
+        return part.type !== 'LEVEL' && levels.every(Number.isFinite) && levels[0] !== levels[1];
+    });
+    if (verticalParts.length !== 1) return '';
+    const part = verticalParts[0];
+    if (part.points[0].level !== start.level || part.points[part.points.length - 1].level !== destination.level) return '';
+    const movement = PATH_NAMES[part.type] || 'connection';
+    const direction = destination.level > start.level ? 'up' : 'down';
+    const description = `${movement} ${direction} from ${levelLabel(start)} to ${levelLabel(destination)}`;
+    const floors = [{area: start, number: 1, role: 'start'}, {area: destination, number: 2, role: 'end'}]
+        .sort((first, second) => second.area.level - first.area.level);
+
+    return [
+        `<div class="london-topology-level-transfer" role="group" aria-label="${escapeHTML(description)}">`,
+        '<p class="london-topology-level-title">Level change</p>',
+        '<div class="london-topology-level-stack">',
+        ...floors.map(floor => `<div class="london-topology-level-floor"><span class="london-topology-endpoint-number ${floor.role}">${floor.number}</span><strong>${escapeHTML(levelLabel(floor.area))}</strong></div>`),
+        '</div>',
+        `<div class="london-topology-level-movement"><span aria-hidden="true">${direction === 'up' ? '↑' : '↓'}</span><strong>${escapeHTML(movement)} ${direction}</strong></div>`,
+        '</div>'
+    ].join('');
+}
+
+function snapshotDateHTML(data) {
+    for (const candidate of [data.dataBuild, data.generatedAt]) {
+        const match = String(candidate || '').match(/^(\d{4}-\d{2}-\d{2})(?:T|$)/);
+        if (!match) continue;
+        const date = new Date(`${match[1]}T00:00:00Z`);
+        if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== match[1]) continue;
+        const label = new Intl.DateTimeFormat('en-GB', {day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC'}).format(date);
+        return `<p class="london-topology-freshness">Station paths snapshot · <time datetime="${match[1]}">${escapeHTML(label)}</time></p>`;
+    }
+    return '<p class="london-topology-freshness">Station paths snapshot date unavailable</p>';
+}
+
 function renderRoute(data, fromId, toId) {
     const route = findLondonStationPath(data, fromId, toId);
     const allAreas = data.areas || [];
@@ -174,7 +216,6 @@ function renderRoute(data, fromId, toId) {
     const destinationKind = streetAreas.some(area => String(area.id) === String(toId)) ? 'street' : 'platform';
     const routeDescription = pathTypes.length ? pathTypes.join(' · ') : 'walkway';
     const minutes = Math.max(1, Math.round(route.duration));
-    const levelLabel = area => area?.level === 0 ? 'Street level' : `Level ${area?.level ?? 'unknown'}`;
     const steps = route.paths.flatMap(path => path.parts || []).map(part => {
         const startLevel = part.points?.[0]?.level;
         const endLevel = part.points?.[part.points.length - 1]?.level;
@@ -183,7 +224,8 @@ function renderRoute(data, fromId, toId) {
     });
 
     return [
-        `<div class="london-topology-route-summary" aria-live="polite" aria-atomic="true"><strong>${minutes} min</strong><span>${escapeHTML(routeDescription)}</span></div>`,
+        `<div class="london-topology-route-summary" aria-live="polite" aria-atomic="true"><div><strong>${minutes} min</strong><small>TfL walking estimate</small></div><span>${escapeHTML(routeDescription)}</span></div>`,
+        levelTransferHTML(route, start, destination),
         map,
         '<div class="london-topology-endpoints">',
         `<div><span class="london-topology-endpoint-number start">1</span><p><strong>${escapeHTML(start ? areaLabel(start) : 'Starting platform')}</strong><small>${escapeHTML(levelLabel(start))}</small></p></div>`,
@@ -222,6 +264,7 @@ export function londonStationTopologyHTML(data, selection = {}) {
         '<section class="london-drawer-section london-topology-card">',
         '<div class="london-section-heading-row"><h3>Station route map</h3><span class="london-topology-source">Baker Street</span></div>',
         '<p class="london-topology-copy">Find a platform or street connection on the map.</p>',
+        snapshotDateHTML(data),
         '<div class="london-topology-controls">',
         '<label>From<select class="london-topology-select" data-topology-role="from" aria-label="Starting platform">',
         options(platforms, fromId, () => 'platform'),
@@ -232,6 +275,7 @@ export function londonStationTopologyHTML(data, selection = {}) {
         '</div>',
         `<div class="london-topology-result">${londonStationTopologyRouteHTML(data, fromId, toId)}</div>`,
         '<p class="london-topology-note">Underground paths are shown over the street map; corridor shapes are approximate. Street links use TfL’s codes.</p>',
+        '<p class="london-topology-note">Walking estimates exclude live crowding and lift or escalator outages.</p>',
         '<p class="london-topology-note">Data provided by Transport for London.</p>',
         '</section>'
     ].join('');

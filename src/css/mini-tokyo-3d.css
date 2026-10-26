@@ -2368,6 +2368,50 @@
     font-size: 11px;
     text-transform: capitalize;
 }
+.mini-tokyo-3d.is-london .london-topology-route-summary small {
+    display: block;
+    margin-top: 3px;
+    color: var(--london-muted);
+    font-size: 11px;
+    font-weight: 400;
+}
+.mini-tokyo-3d.is-london .london-topology-level-transfer {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 16px;
+    row-gap: 8px;
+    margin-top: 12px;
+    padding: 12px;
+    border: 1px solid var(--london-border);
+    border-radius: 12px;
+    background: var(--london-card-muted-bg);
+}
+.mini-tokyo-3d.is-london .london-topology-level-title {
+    grid-column: 1 / -1;
+    margin: 0;
+    color: var(--london-muted);
+    font-size: 11px;
+}
+.mini-tokyo-3d.is-london .london-topology-level-stack { display: grid; gap: 10px; }
+.mini-tokyo-3d.is-london .london-topology-level-floor {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--london-border);
+    font-size: 12px;
+}
+.mini-tokyo-3d.is-london .london-topology-level-movement {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    color: var(--london-blue);
+    font-size: 12px;
+    text-transform: capitalize;
+}
+.mini-tokyo-3d.is-london .london-topology-level-movement > span { font-size: 26px; }
 .mini-tokyo-3d.is-london .london-topology-map {
     display: block;
     width: 100%;
@@ -2440,6 +2484,24 @@
     stroke-width: 2.5;
 }
 .mini-tokyo-3d.is-london .london-topology-pin.end circle { fill: #15803d; }
+.mini-tokyo-3d.is-london .london-topology-pin-leader {
+    fill: none;
+    stroke: var(--station-map-label);
+    stroke-width: 1.25;
+}
+.mini-tokyo-3d.is-london .london-topology-pin-anchor {
+    fill: var(--london-blue);
+    stroke: var(--london-surface-strong);
+    stroke-width: 1;
+}
+.mini-tokyo-3d.is-london .london-topology-pin-anchor.end { fill: #15803d; }
+.mini-tokyo-3d.is-london .london-topology-pin-note,
+.mini-tokyo-3d.is-london .london-topology-freshness {
+    margin: 8px 0 0;
+    color: var(--london-muted);
+    font-size: 11px;
+    line-height: 1.45;
+}
 .mini-tokyo-3d.is-london .london-topology-pin text {
     fill: #fff;
     font-size: 12px;

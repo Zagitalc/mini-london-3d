@@ -4223,7 +4223,7 @@ export default class extends Evented {
                 : stationDetailsHTML;
         }
         ui.drawerCenter.textContent = stationMapLabel;
-        ui.drawerUpdated.textContent = `Last updated ${updatedLabel}`;
+        ui.drawerUpdated.textContent = `Live data updated ${updatedLabel}`;
         ui.drawerBody.scrollTop = Math.min(previousScrollTop, Math.max(0, ui.drawerBody.scrollHeight - ui.drawerBody.clientHeight));
         me._londonStationDrawerScrollState = {
             selectionId: selection.id,
