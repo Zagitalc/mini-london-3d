@@ -37,8 +37,13 @@ const configs = {
     defaultEcoMode: 'normal',
     defaultEcoFrameRate: 30,
 
-    // Realtime backends used by the original Tokyo deployment.
-    // (For London bootstrap, you can leave these as-is; CORS will block them on localhost.)
+    // Periodic refreshes use simulation time, never the display frame rate.
+    minDelay: 25000,
+    refreshInterval: 60000,
+    realtimeCheckInterval: 15000,
+    refreshTimeout: 10000,
+
+    // Realtime backends used only by the original Tokyo deployment.
     tidUrl: 'https://mini-tokyo.appspot.com/tid',
     trainInfoUrl: 'https://mini-tokyo.appspot.com/traininfo',
     atisUrl: 'https://mini-tokyo.appspot.com/atisinfo',

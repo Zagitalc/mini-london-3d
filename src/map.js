@@ -463,6 +463,8 @@ export default class extends Evented {
         me.ecoMode = options.ecoMode;
         me.ecoFrameRate = options.ecoFrameRate;
 
+        // Camera and animation callbacks can run before timezone/data loading completes.
+        me.gtfs = new Map();
         me.lastDynamicUpdate = {};
         me.lastRepaint = 0;
         me.frameRateFactor = 1;
@@ -524,7 +526,6 @@ export default class extends Evented {
         ]).then(me.initialize.bind(me));
 
         clockPromise.then(() => {
-            me.gtfs = new Map();
             me.refreshBusData();
         });
     }
@@ -1930,7 +1931,10 @@ export default class extends Evented {
                     me.lastRealtimeCheck = now - minDelay;
                 }
 
-                if ((me.ecoMode === 'normal' && map._loaded) || Date.now() - me.lastRepaint >= 1000 / me.ecoFrameRate) {
+                const repaintTime = performance.now(),
+                    repaintInterval = 1000 / me.ecoFrameRate;
+
+                if ((me.ecoMode === 'normal' && map._loaded) || repaintTime - me.lastRepaint >= repaintInterval) {
                     let changed;
 
                     me.trafficLayer.setTimeOffset(clock.getTimeOffset());
@@ -1978,7 +1982,10 @@ export default class extends Evented {
                     }
 
                     map.triggerRepaint();
-                    me.lastRepaint = Date.now();
+                    // Retain the fractional frame interval so 120 Hz displays
+                    // do not undershoot the requested Eco rate after small delays.
+                    me.lastRepaint = me.ecoMode === 'eco' ?
+                        repaintTime - (repaintTime - me.lastRepaint) % repaintInterval : repaintTime;
                 }
             }
         });
@@ -6935,7 +6942,7 @@ export default class extends Evented {
     }
 
     refreshRealtimeFlightData() {
-        if (!configs.flightUrl && !configs.atisUrl) {
+        if (this.city === 'london' || (!configs.flightUrl && !configs.atisUrl)) {
             return;
         }
         const me = this;

@@ -15,6 +15,9 @@ const animation = {
         animation.initialized = true;
 
         (function repeat() {
+            // Schedule first: a callback failure must not kill the shared loop.
+            requestAnimationFrame(repeat);
+
             const instances = animation.instances,
                 ids = Object.keys(instances),
                 length = ids.length,
@@ -33,21 +36,27 @@ const animation = {
                             start = instance.start = instance.start || time,
                             elapsed = time - start;
 
-                        if (instance.callback) {
-                            instance.callback(Math.min(elapsed, duration), duration);
-                        }
                         instance.nextFrame = Math.max(nextFrame + 1000 / frameRate, now);
 
-                        if (elapsed >= duration) {
-                            if (instance.complete) {
-                                instance.complete();
+                        try {
+                            if (instance.callback) {
+                                instance.callback(Math.min(elapsed, duration), duration);
                             }
-                            animation.stop(id);
+                            if (elapsed >= duration) {
+                                animation.stop(id);
+                                if (instance.complete) {
+                                    instance.complete();
+                                }
+                            }
+                        } catch (error) {
+                            // Isolate a faulty callback and retry on a later frame.
+                            // Back off persistent failures instead of logging at display rate.
+                            instance.nextFrame = now + 1000;
+                            console.error('Animation callback failed:', error);
                         }
                     }
                 }
             }
-            requestAnimationFrame(repeat);
         })();
     },
 
