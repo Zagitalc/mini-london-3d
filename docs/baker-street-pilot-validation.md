@@ -108,3 +108,39 @@ no errors and two existing import warnings in `src/helpers/helpers.js`.
 A station visit is still needed to validate real corridor shapes, sign wording,
 walking times, named exits, and the source's Metropolitan grouping. Browser device
 emulation cannot replace testing on a physical phone and a genuinely slower GPU.
+
+## Milestone 3: ordered level routes
+
+The previous single-vertical-segment diagram has been replaced with an ordered
+list of every source connection. Simple, multi-segment, same-level, and up/down
+routes now use the same presentation. Equal origin/destination levels do not
+suppress intermediate level changes. Missing level metadata is labelled unknown
+rather than inferred. Level 0 remains a source code; intermediate concourses are
+not automatically described as outdoors or at street level.
+
+The route-level selector highlights connections whose source points include the
+selected level, on both the geographic map and the numbered walking list. Other
+connections stay visible but muted. This is a connection view over the street
+map, not an architectural floor plan or a claim that a whole vertical connection
+lies on one floor. All choices operate on the bundled graph with no new API calls.
+
+Map pins and endpoint badges use **S / D**, explicitly labelled Start and
+Destination. Only walking connections are numbered 1…N. Nearby map pins retain
+the existing separation and geographic leader lines.
+
+For the reported examples, platform 8 → 10 lists stairs up from −5 to −4.
+Platform 8 → 6 lists five connections: escalator up −5→−3, escalator up −3→0,
+then stairs down 0→−1, −1→−2 and −2→−3. These are the actual selected TfL
+parts; no per-platform route sequence was added.
+
+`node scripts/check-london-levels.cjs` (with the same runtime environment variables
+as the performance script) checks all 88 route selections and 378 level choices
+on each of desktop and mobile Chromium. It verifies map/list highlighting,
+Start/Destination pins, simple/complex/same-level examples, and light/dark
+layouts. The complete suite now has **209 passing tests**. Production build and
+lint pass with the same two pre-existing lint warnings.
+
+[AccessAble's station survey](https://www.accessable.co.uk/baker-street-and-marylebone-area/access-guides/baker-street-station)
+documents named entrances, but no verified mapping from those names to the four
+TfL street-link codes was established. The app retains the codes instead of
+assigning entrance names by coordinate proximity.

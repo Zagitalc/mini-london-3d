@@ -44,7 +44,7 @@ import { drawLondonPillImage, LONDON_PILL_MAX_LINES, LONDON_PILL_PIXEL_RATIO, lo
 import { londonBaseMapPaintUpdates, londonDarkLineColour, londonEmissiveUpdates, londonLightingTime, londonRailLineColourExpression } from './helpers/london-map-theme.mjs';
 import { describeLondonStationFacilities } from './helpers/london-station-facilities.mjs';
 import { describeLondonStationStories } from './helpers/london-station-stories.mjs';
-import {londonStationTopologyDestinationOptionsHTML, londonStationTopologyHTML, londonStationTopologyRouteHTML} from './helpers/london-station-topology.mjs';
+import {londonStationTopologyDestinationOptionsHTML, londonStationTopologyHTML, londonStationTopologyRouteHTML, setLondonStationRouteLevel} from './helpers/london-station-topology.mjs';
 import {
     LONDON_TUBE_LINE_IDS,
     extractLondonClosures,
@@ -3313,6 +3313,11 @@ export default class extends Evented {
         me._londonUI.drawerUpdated = drawer.querySelector('.london-drawer-footer-meta');
 
         me._londonUI.drawerBody.addEventListener('change', event => {
+            const level = event.target.closest('[data-topology-level]');
+            if (level) {
+                setLondonStationRouteLevel(level.closest('.london-topology-result'), level.value);
+                return;
+            }
             const control = event.target.closest('.london-topology-select');
             if (!control || !me._londonStationTopology) return;
             const card = control.closest('.london-topology-card');

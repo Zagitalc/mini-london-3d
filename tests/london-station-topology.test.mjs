@@ -4,6 +4,8 @@ import {gunzipSync} from 'node:zlib';
 import test from 'node:test';
 import {
     findLondonStationPath,
+    getLondonStationRouteSteps,
+    setLondonStationRouteLevel,
     getPlatformAreas,
     getStreetAreas,
     londonStationTopologyDestinationOptionsHTML,
@@ -75,18 +77,60 @@ test('changing origin restores its previous platform as a destination and avoids
     assert.match(options, /value="10" selected/);
 });
 
-test('short vertical transfers show floor order and direction without simplifying a complex route', () => {
+test('simple, complex and same-level transfers consistently show ordered source connections', () => {
     const up = londonStationTopologyRouteHTML({...topology, context}, '2', '3');
-    assert.match(up, /aria-label="stairs up from Level -5 to Level -4"/);
+    assert.match(up, /Stairs up/);
+    assert.match(up, /Level -5 → Level -4/);
     assert.match(up, /london-topology-pin-leader/);
     assert.match(up, /Pins separated for clarity/);
+    assert.match(up, /Start · Level -5/);
+    assert.match(up, /Destination · Level -4/);
     assert.match(up, /TfL walking estimate/);
-    assert.ok(up.indexOf('Level -4</strong>') < up.indexOf('Level -5</strong>'));
     const down = londonStationTopologyRouteHTML({...topology, context}, '3', '2');
-    assert.match(down, /aria-label="stairs down from Level -4 to Level -5"/);
-    assert.ok(down.indexOf('Level -4</strong>') < down.indexOf('Level -5</strong>'));
-    assert.doesNotMatch(londonStationTopologyRouteHTML(topology, '2', '6'), /london-topology-level-transfer/);
-    assert.doesNotMatch(londonStationTopologyRouteHTML(topology, '2', '10'), /london-topology-level-transfer/);
+    assert.match(down, /Stairs down/);
+    assert.match(down, /Level -4 → Level -5/);
+    const complex = getLondonStationRouteSteps(findLondonStationPath(topology, '2', '5'));
+    assert.deepEqual(complex.map(step => step.label), ['Escalator up', 'Escalator up', 'Stairs down', 'Stairs down', 'Stairs down']);
+    assert.deepEqual(complex.map(step => step.levels), [[-5, -3], [-3, 0], [0, -1], [-1, -2], [-2, -3]]);
+    const html = londonStationTopologyRouteHTML({...topology, context}, '2', '5');
+    assert.match(html, /Level changes in walking order/);
+    assert.match(html, /Level -3 → Level 0/);
+    assert.doesNotMatch(html, /Street level/);
+    assert.equal((html.match(/class="london-topology-route-segment"/g) || []).length, 5);
+    assert.equal((html.match(/class="london-topology-step-number"/g) || []).length, 5);
+    assert.match(html, /Route level/);
+    const same = londonStationTopologyRouteHTML({...topology, context}, '2', '6');
+    assert.match(same, /Walking route/);
+    assert.match(same, /Walkway/);
+    assert.match(same, /Level -5 → Level -5/);
+    assert.doesNotMatch(same, /Stairs up|Stairs down/);
+});
+
+test('equal endpoint levels do not hide intermediate ascent and descent, or invent missing levels', () => {
+    const route = {paths: [{parts: [
+        {type: 'STAIRS', points: [{level: -3}, {level: -2}]},
+        {type: 'ESCALATOR', points: [{level: -2}, {level: -3}]},
+        {type: 'LEVEL', points: [{}, {}]}
+    ]}]};
+    const steps = getLondonStationRouteSteps(route);
+    assert.deepEqual(steps.map(step => step.label), ['Stairs up', 'Escalator down', 'Walkway']);
+    assert.equal(steps[2].description, 'Level information unavailable');
+    assert.deepEqual(steps[2].levels, []);
+});
+
+test('level selection highlights matching map segments and steps without hiding the remaining journey', () => {
+    const elements = ['-5 -3', '-3 0', '0 -1', '-1 -2', '-2 -3', ''].map(routeLevels => ({
+        dataset: {routeLevels}, muted: false,
+        classList: {toggle(name, muted) {assert.equal(name, 'is-level-muted'); elements.find(e => e.classList === this).muted = muted;}}
+    }));
+    const status = {};
+    const container = {querySelectorAll: () => elements, querySelector: () => status};
+    setLondonStationRouteLevel(container, '-3');
+    assert.deepEqual(elements.map(e => e.muted), [false, false, true, true, false, true]);
+    assert.match(status.textContent, /Level -3 highlighted/);
+    setLondonStationRouteLevel(container, 'all');
+    assert.ok(elements.every(e => !e.muted));
+    assert.match(status.textContent, /All route connections highlighted/);
 });
 
 test('snapshot dates use source metadata, fall back safely and never imply a live topology refresh', () => {

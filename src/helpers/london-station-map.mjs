@@ -122,9 +122,10 @@ function landmarkLabels(features, project) {
  * @param {Array<Object>} points - Selected route coordinates from TfL.
  * @param {string} fromId - Selected starting area.
  * @param {string} toId - Selected destination area.
+ * @param {Array<Object>} [segments] - Ordered route connections with source levels.
  * @returns {string} Accessible SVG and visible data attribution.
  */
-export function londonStationMapHTML(context, nodes, points, fromId, toId) {
+export function londonStationMapHTML(context, nodes, points, fromId, toId, segments = []) {
     const coordinates = [...nodes.map(node => node.point), ...points]
         .filter(point => Number.isFinite(point?.longitude) && Number.isFinite(point?.latitude));
     const fallbackBounds = [
@@ -139,7 +140,7 @@ export function londonStationMapHTML(context, nodes, points, fromId, toId) {
         '<figure class="london-topology-map-figure">',
         `<svg class="london-topology-map" viewBox="0 0 ${WIDTH} ${HEIGHT}" role="img" aria-label="Baker Street street map with the selected underground route">`,
         '<title>Baker Street station walking route on the street map</title>',
-        '<desc>North is up. Streets and buildings are shown at ground level. The underground route is blue; numbered markers show the start and destination.</desc>',
+        '<desc>North is up. Streets and buildings are shown at ground level. The underground route is blue; S marks the start and D marks the destination. Route lines are approximate, not a station floor plan.</desc>',
         `<rect class="london-topology-ground" width="${WIDTH}" height="${HEIGHT}"/>`
     ];
     for (const feature of features.filter(item => item.kind === 'park' || item.kind === 'building')) {
@@ -156,7 +157,14 @@ export function londonStationMapHTML(context, nodes, points, fromId, toId) {
         fragments.push(`<path class="london-topology-footway" d="${pathData(feature.coordinates, project)}"/>`);
     }
     fragments.push(streetLabels(features, project), landmarkLabels(features, project));
-    if (points.length > 1) {
+    if (segments.length) {
+        for (const segment of segments) {
+            const coordinates = segment.points.filter(point => Number.isFinite(point.longitude) && Number.isFinite(point.latitude));
+            if (coordinates.length < 2) continue;
+            const route = pathData(coordinates.map(point => [point.longitude, point.latitude]), project);
+            fragments.push(`<g class="london-topology-route-segment" data-route-levels="${segment.levels.join(' ')}"><title>${escapeHTML(segment.label)}: ${escapeHTML(segment.description)}</title><path class="london-topology-route-halo" d="${route}"/><path class="london-topology-route-line" d="${route}"/></g>`);
+        }
+    } else if (points.length > 1) {
         const route = pathData(points.map(point => [point.longitude, point.latitude]), project);
         fragments.push(`<path class="london-topology-route-halo" d="${route}"/>`, `<path class="london-topology-route-line" d="${route}"/>`);
     }
@@ -173,7 +181,7 @@ export function londonStationMapHTML(context, nodes, points, fromId, toId) {
         if (!Number.isFinite(node.point?.longitude) || !Number.isFinite(node.point?.latitude)) continue;
         const [x, y] = project([node.point.longitude, node.point.latitude]);
         const selected = String(node.id) === String(fromId) ? '1' : String(node.id) === String(toId) ? '2' : null;
-        const title = `<title>${escapeHTML(node.label)}</title>`;
+        const title = `<title>${selected ? (selected === '1' ? 'Start: ' : 'Destination: ') : ''}${escapeHTML(node.label)}</title>`;
         if (selected) {
             const layout = pinLayout?.[selected === '1' ? 0 : 1];
             const [pinX, pinY] = layout?.position || [x, y];
@@ -181,7 +189,7 @@ export function londonStationMapHTML(context, nodes, points, fromId, toId) {
                 fragments.push(`<path class="london-topology-pin-leader" d="M${x},${y}L${pinX},${pinY}"/>`);
                 fragments.push(`<circle class="london-topology-pin-anchor ${selected === '1' ? 'start' : 'end'}" cx="${x}" cy="${y}" r="2.5"/>`);
             }
-            fragments.push(`<g class="london-topology-pin ${selected === '1' ? 'start' : 'end'}" transform="translate(${pinX},${pinY})">${title}<circle r="11"/><text text-anchor="middle" dy="4">${selected}</text></g>`);
+            fragments.push(`<g class="london-topology-pin ${selected === '1' ? 'start' : 'end'}" transform="translate(${pinX},${pinY})">${title}<circle r="11"/><text text-anchor="middle" dy="4">${selected === '1' ? 'S' : 'D'}</text></g>`);
         } else if (node.kind === 'street') {
             fragments.push(`<rect class="london-topology-node street" x="${x - 3.5}" y="${y - 3.5}" width="7" height="7" rx="1.5">${title}</rect>`);
         } else {

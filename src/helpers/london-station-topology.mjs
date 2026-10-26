@@ -166,33 +166,70 @@ function getPathPoints(data, route) {
 }
 
 function levelLabel(area) {
-    return area?.level === 0 ? 'Street level' : `Level ${area?.level ?? 'unknown'}`;
+    return `Level ${area?.level ?? 'unknown'}`;
 }
 
-function levelTransferHTML(route, start, destination) {
-    if (!Number.isFinite(start?.level) || !Number.isFinite(destination?.level) || start.level === destination.level) return '';
-    const verticalParts = route.paths.flatMap(path => path.parts || []).filter(part => {
-        const levels = [part.points?.[0]?.level, part.points?.[part.points.length - 1]?.level];
-        return part.type !== 'LEVEL' && levels.every(Number.isFinite) && levels[0] !== levels[1];
+/**
+ * Keep each listed connection in walking order, including up/down detours.
+ * @param {Object} route - Chosen directed route.
+ * @returns {Array<Object>} Source movements and their known level codes.
+ */
+export function getLondonStationRouteSteps(route) {
+    return (route?.paths || []).flatMap(path => path.parts || []).map(part => {
+        const points = part.points || [];
+        const from = points[0]?.level;
+        const to = points[points.length - 1]?.level;
+        const known = Number.isFinite(from) && Number.isFinite(to);
+        const movement = PATH_NAMES[part.type] || 'connection';
+        const direction = known && from !== to ? (to > from ? 'up' : 'down') : '';
+        return {
+            points,
+            levels: [...new Set(points.map(point => point.level).filter(Number.isFinite))],
+            label: `${movement[0].toUpperCase()}${movement.slice(1)}${direction ? ` ${direction}` : ''}`,
+            description: known ? `${levelLabel({level: from})} → ${levelLabel({level: to})}` : 'Level information unavailable',
+            vertical: known && from !== to
+        };
     });
-    if (verticalParts.length !== 1) return '';
-    const part = verticalParts[0];
-    if (part.points[0].level !== start.level || part.points[part.points.length - 1].level !== destination.level) return '';
-    const movement = PATH_NAMES[part.type] || 'connection';
-    const direction = destination.level > start.level ? 'up' : 'down';
-    const description = `${movement} ${direction} from ${levelLabel(start)} to ${levelLabel(destination)}`;
-    const floors = [{area: start, number: 1, role: 'start'}, {area: destination, number: 2, role: 'end'}]
-        .sort((first, second) => second.area.level - first.area.level);
+}
 
+function levelTransferHTML(steps) {
+    if (!steps.length) return '<p class="london-topology-note">Detailed route steps are unavailable.</p>';
+    const levels = [...new Set(steps.flatMap(step => step.levels))].sort((a, b) => a - b);
+    const title = steps.some(step => step.vertical) ? 'Level changes in walking order' : 'Walking route';
     return [
-        `<div class="london-topology-level-transfer" role="group" aria-label="${escapeHTML(description)}">`,
-        '<p class="london-topology-level-title">Level change</p>',
-        '<div class="london-topology-level-stack">',
-        ...floors.map(floor => `<div class="london-topology-level-floor"><span class="london-topology-endpoint-number ${floor.role}">${floor.number}</span><strong>${escapeHTML(levelLabel(floor.area))}</strong></div>`),
-        '</div>',
-        `<div class="london-topology-level-movement"><span aria-hidden="true">${direction === 'up' ? '↑' : '↓'}</span><strong>${escapeHTML(movement)} ${direction}</strong></div>`,
-        '</div>'
+        '<section class="london-topology-level-transfer" aria-label="Route steps in walking order">',
+        `<h4 class="london-topology-level-title">${title}</h4>`,
+        '<p class="london-topology-note">Start → Destination. Follow these connections in order.</p>',
+        '<ol class="london-topology-level-sequence" role="list">',
+        ...steps.map((step, index) => `<li data-route-levels="${step.levels.join(' ')}"><span class="london-topology-step-number" aria-hidden="true">${index + 1}</span><div><strong>${escapeHTML(step.label)}</strong><small>${escapeHTML(step.description)}</small></div></li>`),
+        '</ol>',
+        ...(levels.length ? [
+            '<label class="london-topology-level-filter">Show on map<select class="london-topology-select" aria-label="Route level" data-topology-level>',
+            '<option value="all">All route levels</option>',
+            ...levels.map(level => `<option value="${level}">${escapeHTML(levelLabel({level}))}</option>`),
+            '</select></label>',
+            '<p class="london-topology-note london-topology-level-status" role="status">All route connections highlighted. Level codes are from TfL, not a floor plan.</p>'
+        ] : []),
+        '</section>'
     ].join('');
+}
+
+/**
+ * Highlight source connections touching one selected level without hiding the
+ * remaining journey, replacing controls, or requesting new data.
+ * @param {HTMLElement} container - Route result container.
+ * @param {string} level - Source level code or "all".
+ */
+export function setLondonStationRouteLevel(container, level) {
+    const selected = String(level);
+    for (const element of container.querySelectorAll('[data-route-levels]')) {
+        const levels = element.dataset.routeLevels.split(' ');
+        element.classList.toggle('is-level-muted', selected !== 'all' && !levels.includes(selected));
+    }
+    const status = container.querySelector('.london-topology-level-status');
+    if (status) status.textContent = selected === 'all' ?
+        'All route connections highlighted. Level codes are from TfL, not a floor plan.' :
+        `Connections touching ${levelLabel({level: Number(selected)})} highlighted; other route connections remain visible.`;
 }
 
 function snapshotDateHTML(data) {
@@ -213,6 +250,7 @@ function renderRoute(data, fromId, toId) {
     const platforms = getPlatformAreas(data);
     const streetAreas = getStreetAreas(data);
     const points = getPathPoints(data, route || {paths: []});
+    const steps = getLondonStationRouteSteps(route);
     const nodes = [...platforms, ...streetAreas].map(area => ({
         id: area.id,
         point: area.point,
@@ -220,7 +258,7 @@ function renderRoute(data, fromId, toId) {
         label: areaLabel(area, streetAreas.includes(area) ? 'street' : 'platform', data),
         colour: LINE_COLOURS[(area.lines || []).find(line => line.mode === TUBE_MODE)?.symbol] || '#555'
     }));
-    const map = londonStationMapHTML(data.context, nodes, points, fromId, toId);
+    const map = londonStationMapHTML(data.context, nodes, points, fromId, toId, steps);
 
     if (!route) {
         return [
@@ -237,12 +275,7 @@ function renderRoute(data, fromId, toId) {
     const destinationKind = streetAreas.some(area => String(area.id) === String(toId)) ? 'street' : 'platform';
     const routeDescription = pathTypes.length ? pathTypes.join(' · ') : 'walkway';
     const minutes = Math.max(1, Math.round(route.duration));
-    const steps = route.paths.flatMap(path => path.parts || []).map(part => {
-        const startLevel = part.points?.[0]?.level;
-        const endLevel = part.points?.[part.points.length - 1]?.level;
-        const movement = PATH_NAMES[part.type] || 'walkway';
-        return `${movement[0].toUpperCase()}${movement.slice(1)}${Number.isFinite(startLevel) && Number.isFinite(endLevel) ? ` · level ${startLevel} → ${endLevel}` : ''}`;
-    });
+
 
     return [
         `<div class="london-topology-route-summary" aria-live="polite" aria-atomic="true"><div><strong>About ${minutes} min</strong><small>TfL walking estimate</small></div><span>${escapeHTML(routeDescription)}</span></div>`,
@@ -250,14 +283,13 @@ function renderRoute(data, fromId, toId) {
         ...([start, destination].some(area => ['MetWB', 'MetEB'].includes(area?.name)) ? [
             '<p class="london-topology-note">Metropolitan groups do not identify individual platforms 1–4. Check the departure board for your platform.</p>'
         ] : []),
-        levelTransferHTML(route, start, destination),
+        levelTransferHTML(steps),
         map,
         '<div class="london-topology-endpoints">',
-        `<div><span class="london-topology-endpoint-number start">1</span><p><strong>${escapeHTML(start ? areaLabel(start, 'platform', data) : 'Starting platform')}</strong><small>${escapeHTML(levelLabel(start))}</small></p></div>`,
-        `<div><span class="london-topology-endpoint-number end">2</span><p><strong>${escapeHTML(destination ? areaLabel(destination, destinationKind, data) : 'Destination')}</strong><small>${escapeHTML(levelLabel(destination))}</small></p></div>`,
+        `<div><span class="london-topology-endpoint-number start" aria-hidden="true">S</span><p><strong>${escapeHTML(start ? areaLabel(start, 'platform', data) : 'Starting platform')}</strong><small>Start · ${escapeHTML(levelLabel(start))}</small></p></div>`,
+        `<div><span class="london-topology-endpoint-number end" aria-hidden="true">D</span><p><strong>${escapeHTML(destination ? areaLabel(destination, destinationKind, data) : 'Destination')}</strong><small>Destination · ${escapeHTML(levelLabel(destination))}</small></p></div>`,
         '</div>',
-        '<div class="london-topology-legend"><span><i class="route"></i>Schematic route</span><span><i class="street"></i>Street connection</span></div>',
-        `<details class="london-topology-steps"><summary>Route steps · ${steps.length}</summary><ol>${steps.map(step => `<li>${escapeHTML(step)}</li>`).join('')}</ol></details>`
+        '<div class="london-topology-legend"><span><i class="route"></i>Schematic route</span><span><i class="street"></i>Street connection</span></div>'
     ].join('');
 }
 
