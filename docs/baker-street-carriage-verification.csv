@@ -1,0 +1,5 @@
+station_id,origin_area_id,platform,line,direction,target_description,target_area_id,observed_position,verified_at,evidence_reference,status
+940GZZLUBST,6,7,jubilee,southbound,,,,,,pending_verification
+940GZZLUBST,2,8,bakerloo,southbound,,,,,,pending_verification
+940GZZLUBST,3,9,bakerloo,northbound,,,,,,pending_verification
+940GZZLUBST,7,10,jubilee,northbound,,,,,,pending_verification
