@@ -44,6 +44,7 @@ import { drawLondonPillImage, LONDON_PILL_MAX_LINES, LONDON_PILL_PIXEL_RATIO, lo
 import { londonBaseMapPaintUpdates, londonDarkLineColour, londonEmissiveUpdates, londonLightingTime, londonRailLineColourExpression } from './helpers/london-map-theme.mjs';
 import { describeLondonStationFacilities } from './helpers/london-station-facilities.mjs';
 import { describeLondonStationStories } from './helpers/london-station-stories.mjs';
+import {londonStationTopologyHTML, londonStationTopologyRouteHTML} from './helpers/london-station-topology.mjs';
 import {
     LONDON_TUBE_LINE_IDS,
     extractLondonClosures,
@@ -3131,6 +3132,22 @@ export default class extends Evented {
         return me._londonStationFacilitiesPromise;
     }
 
+    loadLondonStationTopology() {
+        const me = this;
+
+        if (!me._londonStationTopologyPromise) {
+            me._londonStationTopologyPromise = helpers.loadJSON(`${me.dataUrl}/station-topology.json.gz`)
+                .catch(() => null)
+                .then(data => {
+                    me._londonStationTopology = data || null;
+                    me._londonStationTopologyLoaded = true;
+                    me.renderLondonStationDrawer();
+                    return me._londonStationTopology;
+                });
+        }
+        return me._londonStationTopologyPromise;
+    }
+
     getLondonStationFacilities(selection) {
         const stations = this._londonStationFacilities;
 
@@ -3283,6 +3300,22 @@ export default class extends Evented {
         me._londonUI.drawerBody = drawer.querySelector('.london-station-drawer-body');
         me._londonUI.drawerCenter = drawer.querySelector('.london-center-station');
         me._londonUI.drawerUpdated = drawer.querySelector('.london-drawer-footer-meta');
+
+        me._londonUI.drawerBody.addEventListener('change', event => {
+            const control = event.target.closest('.london-topology-select');
+            if (!control || !me._londonStationTopology) return;
+            const card = control.closest('.london-topology-card');
+            const result = card && card.querySelector('.london-topology-result');
+            if (!card || !result) return;
+            const from = card.querySelector('[data-topology-role="from"]');
+            const to = card.querySelector('[data-topology-role="to"]');
+            if (from.value === to.value) {
+                const alternate = [...to.options].find(option => option.value !== from.value);
+                if (alternate) to.value = alternate.value;
+            }
+            me._londonStationTopologySelection = {from: from.value, to: to.value};
+            result.innerHTML = londonStationTopologyRouteHTML(me._londonStationTopology, from.value, to.value);
+        });
 
         me._londonUI.drawerClose.addEventListener('click', () => {
             me._londonStationDrawerScrollState = null;
@@ -4047,6 +4080,14 @@ export default class extends Evented {
         }
 
         const title = me.getLocalizedStationTitle(selection.stations[0]);
+        const isBakerStreet = selection.stations.some(station => String((station && station.id) || '').includes('940GZZLUBST'));
+        if (isBakerStreet && !me._londonStationTopology && !me._londonStationTopologyPromise) {
+            me.loadLondonStationTopology();
+        }
+        const stationTopology = isBakerStreet ? me._londonStationTopology : null;
+        const stationTopologySection = isBakerStreet ? (stationTopology
+            ? londonStationTopologyHTML(stationTopology, me._londonStationTopologySelection)
+            : `<section class="london-drawer-section london-topology-card"><div class="london-section-heading-row"><h3>Station route map</h3><span class="london-topology-source">TfL topology</span></div><p class="london-topology-copy">${me._londonStationTopologyLoaded ? 'Baker Street station paths could not be loaded.' : 'Loading Baker Street station paths…'}</p></section>`) : '';
         const stationStatuses = me.getLondonStationStatusRecords(selection);
         const drawerData = me._londonStationDrawerData && me._londonStationDrawerData.selectionId === selection.id
             ? me._londonStationDrawerData
@@ -4128,6 +4169,7 @@ export default class extends Evented {
                 ].join('')).join('') :
                 '<div class="london-empty-state">No live arrival data is available for this station right now.</div>'),
             '</section>',
+            stationTopologySection,
             '<div class="london-section-divider"></div>',
             '<section class="london-drawer-section">',
             '<div class="london-section-heading-row">',

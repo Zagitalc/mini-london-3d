@@ -2278,6 +2278,132 @@
     text-decoration: underline;
     text-underline-offset: 2px;
 }
+.mini-tokyo-3d.is-london .london-topology-card {
+    padding: 14px;
+    border: 1px solid var(--london-border);
+    border-radius: 18px;
+    background: var(--london-card-bg);
+}
+.mini-tokyo-3d.is-london .london-topology-source {
+    color: var(--london-muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+.mini-tokyo-3d.is-london .london-topology-copy,
+.mini-tokyo-3d.is-london .london-topology-note,
+.mini-tokyo-3d.is-london .london-topology-destination {
+    margin: 8px 0 0;
+    color: var(--london-muted);
+    font-size: 12px;
+    line-height: 1.45;
+}
+.mini-tokyo-3d.is-london .london-topology-controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 12px;
+}
+.mini-tokyo-3d.is-london .london-topology-controls label {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+    color: var(--london-muted);
+    font-size: 11px;
+    font-weight: 700;
+}
+.mini-tokyo-3d.is-london .london-topology-select {
+    width: 100%;
+    min-width: 0;
+    min-height: 38px;
+    padding: 0 9px;
+    border: 1px solid var(--london-border);
+    border-radius: 10px;
+    color: var(--london-text);
+    background: var(--london-field-bg);
+    font: inherit;
+    font-size: 11px;
+}
+.mini-tokyo-3d.is-london .london-topology-select:focus-visible {
+    outline: 2px solid var(--london-blue);
+    outline-offset: 2px;
+}
+.mini-tokyo-3d.is-london .london-topology-route-summary {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-top: 12px;
+}
+.mini-tokyo-3d.is-london .london-topology-route-summary strong {
+    color: var(--london-blue);
+    font-size: 18px;
+    white-space: nowrap;
+}
+.mini-tokyo-3d.is-london .london-topology-route-summary span {
+    color: var(--london-muted);
+    font-size: 11px;
+    text-transform: capitalize;
+}
+.mini-tokyo-3d.is-london .london-topology-map {
+    display: block;
+    width: 100%;
+    height: auto;
+    margin-top: 8px;
+    border-radius: 12px;
+    background: var(--london-card-muted-bg);
+}
+.mini-tokyo-3d.is-london .london-topology-route-line {
+    fill: none;
+    stroke: var(--london-blue);
+    stroke-width: 4;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+.mini-tokyo-3d.is-london .london-topology-node.platform {
+    fill: var(--london-card-bg);
+    stroke: var(--london-text);
+    stroke-width: 2;
+}
+.mini-tokyo-3d.is-london .london-topology-node.street {
+    fill: var(--london-card-bg);
+    stroke: #15803d;
+    stroke-width: 2;
+}
+.mini-tokyo-3d.is-london .london-topology-node.selected {
+    fill: var(--london-blue);
+    stroke: var(--london-card-bg);
+    stroke-width: 2.5;
+}
+.mini-tokyo-3d.is-london .london-topology-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 8px;
+    color: var(--london-muted);
+    font-size: 10px;
+}
+.mini-tokyo-3d.is-london .london-topology-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+.mini-tokyo-3d.is-london .london-topology-legend i {
+    width: 8px;
+    height: 8px;
+    border: 1.5px solid var(--london-text);
+    border-radius: 50%;
+}
+.mini-tokyo-3d.is-london .london-topology-legend i.street {
+    border-color: #15803d;
+    border-radius: 2px;
+}
+.mini-tokyo-3d.is-london .london-topology-empty {
+    padding: 10px 0 0;
+    color: var(--london-muted);
+    font-size: 12px;
+}
 .mini-tokyo-3d.is-london .london-section-divider {
     width: 100%;
     height: 1px;
